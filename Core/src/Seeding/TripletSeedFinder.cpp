@@ -303,16 +303,34 @@ class Impl final : public TripletSeedFinder {
     const auto tops = topDoublets.begin();
     const std::size_t nTops = topDoublets.size();
 
+    // A mask with the bit of each lane whose flag is 1
+    const auto laneMask = [](const std::array<std::uint32_t, kChunk>& flags) {
+      std::uint32_t mask = 0;
+      for (std::size_t lane = 0; lane < kChunk; ++lane) {
+        mask |= flags[lane] << lane;
+      }
+      return mask;
+    };
+
     // The checks of a top after its strip checks: the body of the original
     // loop over the tops, each return a continue of that loop. Adds the
     // triplet top candidate where the top passes them all. A0, B0 and
     // zDirectionMiddle are the top's values from the strip checks, and scale
     // and sOuter those of the middle (M) and bottom (B) strip checks.
-    const auto addTopCandidate = [&](const auto& topDoublet, const float A0,
-                                     const float B0,
-                                     const float zDirectionMiddle,
-                                     const float scaleM, const float sOuterM,
-                                     const float scaleB, const float sOuterB) {
+    // The values of a top from its strip checks
+    struct StripValues {
+      float A0;
+      float B0;
+      float zDirectionMiddle;
+      float scaleM;
+      float sOuterM;
+      float scaleB;
+      float sOuterB;
+    };
+    const auto addTopCandidate = [&](const auto& topDoublet,
+                                     const StripValues& values) {
+      const auto [A0, B0, zDirectionMiddle, scaleM, sOuterM, scaleB, sOuterB] =
+          values;
       // check the time compatibility of the three space points, before the
       // expensive strip coordinate transformation below
       if constexpr (useTime) {
@@ -541,11 +559,7 @@ class Impl final : public TripletSeedFinder {
       // a chunk with no top passing the middle strip check is skipped
       const std::uint32_t validLanes =
           (std::uint32_t{1} << std::min(kChunk, endTop - chunkBegin)) - 1;
-      std::uint32_t middleMask = 0;
-      for (std::size_t lane = 0; lane < kChunk; ++lane) {
-        middleMask |= passes[lane] << lane;
-      }
-      if ((middleMask & validLanes) == 0) {
+      if ((laneMask(passes) & validLanes) == 0) {
         continue;
       }
 
@@ -586,16 +600,13 @@ class Impl final : public TripletSeedFinder {
       }
 
       // 6. the remaining checks of the tops that pass both, in their order
-      std::uint32_t passedMask = 0;
-      for (std::size_t lane = 0; lane < kChunk; ++lane) {
-        passedMask |= passes[lane] << lane;
-      }
-      for (std::uint32_t passed = passedMask & validLanes; passed != 0;
+      for (std::uint32_t passed = laneMask(passes) & validLanes; passed != 0;
            passed &= passed - 1) {
         const std::size_t lane = std::countr_zero(passed);
-        addTopCandidate(tops[chunkBegin + lane], A0[lane], B0[lane],
-                        zDirectionMiddle[lane], scaleM[lane], sOuterM[lane],
-                        scaleB[lane], sOuterB[lane]);
+        addTopCandidate(
+            tops[chunkBegin + lane],
+            {A0[lane], B0[lane], zDirectionMiddle[lane], scaleM[lane],
+             sOuterM[lane], scaleB[lane], sOuterB[lane]});
       }
     }
 

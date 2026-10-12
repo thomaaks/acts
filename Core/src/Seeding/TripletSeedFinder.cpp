@@ -293,19 +293,26 @@ class Impl final : public TripletSeedFinder {
     const float xBottom = bottomDoublet.x();
     const float yBottom = bottomDoublet.y();
 
-    // The middle strip check is evaluated for a chunk of the tops in the
-    // cotTheta window at a time, without branches, then the remaining checks
-    // for the tops that passed it, in their order.
+    // The tops of the cotTheta window go through the strip checks a chunk at
+    // a time, a lane per top, and the tops that pass them through the
+    // remaining checks, in their order.
     constexpr std::size_t kChunk = 8;
+    static_assert(kChunk <= 32, "a lane mask has one bit per lane");
     const float cotThetaDiffMax2 =
         m_cfg.cotThetaDiffMax * m_cfg.cotThetaDiffMax;
     const auto tops = topDoublets.begin();
     const std::size_t nTops = topDoublets.size();
 
-    const auto checkTop = [&](const auto& topDoublet, const float A0,
-                              const float B0, const float zDirectionMiddle,
-                              const float scaleM, const float sOuterM,
-                              const float scaleB, const float sOuterB) {
+    // The checks of a top after its strip checks: the body of the original
+    // loop over the tops, each return a continue of that loop. Adds the
+    // triplet top candidate where the top passes them all. A0, B0 and
+    // zDirectionMiddle are the top's values from the strip checks, and scale
+    // and sOuter those of the middle (M) and bottom (B) strip checks.
+    const auto addTopCandidate = [&](const auto& topDoublet, const float A0,
+                                     const float B0,
+                                     const float zDirectionMiddle,
+                                     const float scaleM, const float sOuterM,
+                                     const float scaleB, const float sOuterB) {
       // check the time compatibility of the three space points, before the
       // expensive strip coordinate transformation below
       if constexpr (useTime) {
@@ -364,8 +371,8 @@ class Impl final : public TripletSeedFinder {
       const float averageCotTheta = 0.5f * (cotThetaB + cotThetaT);
       const float cotThetaAvg2 = averageCotTheta * averageCotTheta;
 
-      // add errors of spB-spM and spM-spT pairs and add the correlation term
-      // for errors on spM
+      // add errors of spB-spM and spM-spT pairs and add the correlation
+      // term for errors on spM
       const float error2 = topDoublet.er() + erB +
                            2 * (cotThetaAvg2 * varianceRM + varianceZM) *
                                iDeltaRB * topDoublet.iDeltaR();
@@ -378,11 +385,11 @@ class Impl final : public TripletSeedFinder {
       // between slopes, and comparing to the squared uncertainty in this
       // difference - we keep a seed if the difference is compatible within
       // the assumed uncertainties. The uncertainties get contribution from
-      // the  space-point-related squared error (error2) and a scattering term
-      // calculated assuming the minimum pt we expect to reconstruct
-      // (scatteringInRegion2). This assumes gaussian error propagation which
-      // allows just adding the two errors if they are uncorrelated (which is
-      // fair for scattering and measurement uncertainties)
+      // the  space-point-related squared error (error2) and a scattering
+      // term calculated assuming the minimum pt we expect to reconstruct
+      // (scatteringInRegion2). This assumes gaussian error propagation
+      // which allows just adding the two errors if they are uncorrelated
+      // (which is fair for scattering and measurement uncertainties)
       if (deltaCotTheta2 > error2 + scatteringInRegion2) {
         // skip top SPs based on cotTheta sorting when producing triplets
         return;
@@ -419,10 +426,11 @@ class Impl final : public TripletSeedFinder {
       // the two seed segments using a scattering term scaled by the actual
       // measured pT (p2scatterSigma)
       const float iHelixDiameter2 = B2 / S2;
-      // convert p(T) to p scaling by sin^2(theta) AND scale by 1/sin^4(theta)
-      // from rad to deltaCotTheta
+      // convert p(T) to p scaling by sin^2(theta) AND scale by
+      // 1/sin^4(theta) from rad to deltaCotTheta
       const float p2scatterSigma = iHelixDiameter2 * sigmaSquaredPtDependent;
-      // if deltaTheta larger than allowed scattering for calculated pT, skip
+      // if deltaTheta larger than allowed scattering for calculated pT,
+      // skip
       if (deltaCotTheta2 > error2 + p2scatterSigma) {
         return;
       }
@@ -441,9 +449,12 @@ class Impl final : public TripletSeedFinder {
                                         B / std::sqrt(S2), im);
     };
 
-    // The tops inside the cotTheta window of this bottom: the tops below it
-    // are skipped, here and for the later bottoms, and the window ends at the
-    // first top above it.
+    // 1. The tops inside the cotTheta window of this bottom. The doublet
+    // cotTheta values are computed from the space point centres and are
+    // approximate, so the window is loose. The tops are sorted by cotTheta,
+    // as are the bottoms: the tops below the window come first and are below
+    // the windows of the later bottoms too, so they are skipped from here on,
+    // and the window ends at the first top above it, found by bisection.
     std::size_t topDoubletOffset = 0;
     std::size_t endTop = nTops;
     if constexpr (sortedByCotTheta) {
@@ -468,68 +479,78 @@ class Impl final : public TripletSeedFinder {
       endTop = lo;
     }
 
-    for (std::size_t c = topDoubletOffset; c < endTop; c += kChunk) {
-      // the last chunk repeats its last top in the lanes past the end
+    // 2.-6. The window's tops a chunk at a time. Each step is a loop of its
+    // own over the lanes, the form compilers vectorise. Flags are 0 or 1.
+    for (std::size_t chunkBegin = topDoubletOffset; chunkBegin < endTop;
+         chunkBegin += kChunk) {
+      // 2. the tops' conformal coordinates; the last chunk repeats its last
+      // top in the lanes past the end
       std::array<float, kChunk> u{};
       std::array<float, kChunk> v{};
-      for (std::size_t l = 0; l < kChunk; ++l) {
-        const auto top = tops[std::min(c + l, endTop - 1)];
-        u[l] = top.u();
-        v[l] = top.v();
+      for (std::size_t lane = 0; lane < kChunk; ++lane) {
+        const auto top = tops[std::min(chunkBegin + lane, endTop - 1)];
+        u[lane] = top.u();
+        v[lane] = top.v();
       }
 
+      // 3. A0, divided by 1 where dU0 is 0; those tops fail the middle
+      // strip check below, as the original loop skipped them
       std::array<float, kChunk> dU0{};
       std::array<float, kChunk> divisor{};
       std::array<float, kChunk> A0{};
-      for (std::size_t l = 0; l < kChunk; ++l) {
-        dU0[l] = u[l] - Ub0;
-        divisor[l] = dU0[l] != 0 ? dU0[l] : 1.f;
+      for (std::size_t lane = 0; lane < kChunk; ++lane) {
+        dU0[lane] = u[lane] - Ub0;
+        divisor[lane] = dU0[lane] != 0 ? dU0[lane] : 1.f;
       }
-      for (std::size_t l = 0; l < kChunk; ++l) {
-        A0[l] = (v[l] - Vb0) / divisor[l];
+      for (std::size_t lane = 0; lane < kChunk; ++lane) {
+        A0[lane] = (v[lane] - Vb0) / divisor[lane];
       }
 
-      // the middle strip check of detail::calibrateOuterStripSpacePoint, with
-      // the direction it is given for this top
-      const auto& ihvCrossOhv = calM.innerCrossOuterHalfVector;
-      const auto& iosvCrossOhv =
+      // 4. the middle strip check of detail::calibrateOuterStripSpacePoint.
+      // It is scale-invariant, so the direction's z component is cosTheta
+      // rather than cosTheta * sqrt(1 + A0^2). Its rejection conditions are
+      // negated, !(x > limit), so they are evaluated as it evaluates them.
+      const auto& ihvCrossOhvM = calM.innerCrossOuterHalfVector;
+      const auto& iosvCrossOhvM =
           calM.innerToOuterSeparationCrossOuterHalfVector;
-      const auto& iosvCrossIhv =
+      const auto& iosvCrossIhvM =
           calM.innerToOuterSeparationCrossInnerHalfVector;
-      std::array<float, kChunk> scale{};
-      std::array<float, kChunk> sOuter{};
-      std::array<std::uint32_t, kChunk> middle{};
-      for (std::size_t l = 0; l < kChunk; ++l) {
+      std::array<float, kChunk> scaleM{};
+      std::array<float, kChunk> sOuterM{};
+      std::array<std::uint32_t, kChunk> passes{};
+      for (std::size_t lane = 0; lane < kChunk; ++lane) {
         const float d0 =
-            rotationTermsUVtoXY[0] - rotationTermsUVtoXY[1] * A0[l];
+            rotationTermsUVtoXY[0] - rotationTermsUVtoXY[1] * A0[lane];
         const float d1 =
-            rotationTermsUVtoXY[0] * A0[l] + rotationTermsUVtoXY[1];
+            rotationTermsUVtoXY[0] * A0[lane] + rotationTermsUVtoXY[1];
         // summed in the order of detail::stdArrayDot
-        scale[l] = 0.f + d0 * ihvCrossOhv[0] + d1 * ihvCrossOhv[1] +
-                   cosTheta * ihvCrossOhv[2];
-        const float sInner = 0.f + d0 * iosvCrossOhv[0] + d1 * iosvCrossOhv[1] +
-                             cosTheta * iosvCrossOhv[2];
-        sOuter[l] = 0.f + d0 * iosvCrossIhv[0] + d1 * iosvCrossIhv[1] +
-                    cosTheta * iosvCrossIhv[2];
-        const float limit = std::abs(scale[l]) * m_cfg.toleranceParam;
-        middle[l] = static_cast<std::uint32_t>(dU0[l] != 0) &
-                    static_cast<std::uint32_t>(!(std::abs(sInner) > limit)) &
-                    static_cast<std::uint32_t>(!(std::abs(sOuter[l]) > limit));
+        scaleM[lane] = 0.f + d0 * ihvCrossOhvM[0] + d1 * ihvCrossOhvM[1] +
+                       cosTheta * ihvCrossOhvM[2];
+        const float sInner = 0.f + d0 * iosvCrossOhvM[0] +
+                             d1 * iosvCrossOhvM[1] +
+                             cosTheta * iosvCrossOhvM[2];
+        sOuterM[lane] = 0.f + d0 * iosvCrossIhvM[0] + d1 * iosvCrossIhvM[1] +
+                        cosTheta * iosvCrossIhvM[2];
+        const float limit = std::abs(scaleM[lane]) * m_cfg.toleranceParam;
+        passes[lane] =
+            static_cast<std::uint32_t>(dU0[lane] != 0) &
+            static_cast<std::uint32_t>(!(std::abs(sInner) > limit)) &
+            static_cast<std::uint32_t>(!(std::abs(sOuterM[lane]) > limit));
       }
 
       // a chunk with no top passing the middle strip check is skipped
-      const std::uint32_t lanes =
-          (std::uint32_t{1} << std::min(kChunk, endTop - c)) - 1;
+      const std::uint32_t validLanes =
+          (std::uint32_t{1} << std::min(kChunk, endTop - chunkBegin)) - 1;
       std::uint32_t middleMask = 0;
-      for (std::size_t l = 0; l < kChunk; ++l) {
-        middleMask |= middle[l] << l;
+      for (std::size_t lane = 0; lane < kChunk; ++lane) {
+        middleMask |= passes[lane] << lane;
       }
-      if ((middleMask & lanes) == 0) {
+      if ((middleMask & validLanes) == 0) {
         continue;
       }
 
-      // the bottom strip check of detail::calibrateOuterStripSpacePoint, with
-      // the direction it is given for this top
+      // 5. the bottom strip check of detail::calibrateOuterStripSpacePoint,
+      // with the direction's full z component
       const auto& ihvCrossOhvB = calB.innerCrossOuterHalfVector;
       const auto& iosvCrossOhvB =
           calB.innerToOuterSeparationCrossOuterHalfVector;
@@ -537,42 +558,44 @@ class Impl final : public TripletSeedFinder {
           calB.innerToOuterSeparationCrossInnerHalfVector;
       std::array<float, kChunk> zDirectionMiddle{};
       std::array<float, kChunk> B0{};
-      for (std::size_t l = 0; l < kChunk; ++l) {
-        zDirectionMiddle[l] = cosTheta * std::sqrt(1 + A0[l] * A0[l]);
-        B0[l] = 2 * (Vb0 - A0[l] * Ub0);
+      for (std::size_t lane = 0; lane < kChunk; ++lane) {
+        zDirectionMiddle[lane] = cosTheta * std::sqrt(1 + A0[lane] * A0[lane]);
+        B0[lane] = 2 * (Vb0 - A0[lane] * Ub0);
       }
       std::array<float, kChunk> scaleB{};
       std::array<float, kChunk> sOuterB{};
-      for (std::size_t l = 0; l < kChunk; ++l) {
-        const float Cb = 1 - B0[l] * yBottom;
-        const float Sb = A0[l] + B0[l] * xBottom;
+      for (std::size_t lane = 0; lane < kChunk; ++lane) {
+        const float Cb = 1 - B0[lane] * yBottom;
+        const float Sb = A0[lane] + B0[lane] * xBottom;
         const float d0 =
             rotationTermsUVtoXY[0] * Cb - rotationTermsUVtoXY[1] * Sb;
         const float d1 =
             rotationTermsUVtoXY[0] * Sb + rotationTermsUVtoXY[1] * Cb;
         // summed in the order of detail::stdArrayDot
-        scaleB[l] = 0.f + d0 * ihvCrossOhvB[0] + d1 * ihvCrossOhvB[1] +
-                    zDirectionMiddle[l] * ihvCrossOhvB[2];
+        scaleB[lane] = 0.f + d0 * ihvCrossOhvB[0] + d1 * ihvCrossOhvB[1] +
+                       zDirectionMiddle[lane] * ihvCrossOhvB[2];
         const float sInner = 0.f + d0 * iosvCrossOhvB[0] +
                              d1 * iosvCrossOhvB[1] +
-                             zDirectionMiddle[l] * iosvCrossOhvB[2];
-        sOuterB[l] = 0.f + d0 * iosvCrossIhvB[0] + d1 * iosvCrossIhvB[1] +
-                     zDirectionMiddle[l] * iosvCrossIhvB[2];
-        const float limit = std::abs(scaleB[l]) * m_cfg.toleranceParam;
-        middle[l] &=
+                             zDirectionMiddle[lane] * iosvCrossOhvB[2];
+        sOuterB[lane] = 0.f + d0 * iosvCrossIhvB[0] + d1 * iosvCrossIhvB[1] +
+                        zDirectionMiddle[lane] * iosvCrossIhvB[2];
+        const float limit = std::abs(scaleB[lane]) * m_cfg.toleranceParam;
+        passes[lane] &=
             static_cast<std::uint32_t>(!(std::abs(sInner) > limit)) &
-            static_cast<std::uint32_t>(!(std::abs(sOuterB[l]) > limit));
+            static_cast<std::uint32_t>(!(std::abs(sOuterB[lane]) > limit));
       }
 
+      // 6. the remaining checks of the tops that pass both, in their order
       std::uint32_t passedMask = 0;
-      for (std::size_t l = 0; l < kChunk; ++l) {
-        passedMask |= middle[l] << l;
+      for (std::size_t lane = 0; lane < kChunk; ++lane) {
+        passedMask |= passes[lane] << lane;
       }
-      for (std::uint32_t passed = passedMask & lanes; passed != 0;
+      for (std::uint32_t passed = passedMask & validLanes; passed != 0;
            passed &= passed - 1) {
-        const std::size_t l = std::countr_zero(passed);
-        checkTop(tops[c + l], A0[l], B0[l], zDirectionMiddle[l], scale[l],
-                 sOuter[l], scaleB[l], sOuterB[l]);
+        const std::size_t lane = std::countr_zero(passed);
+        addTopCandidate(tops[chunkBegin + lane], A0[lane], B0[lane],
+                        zDirectionMiddle[lane], scaleM[lane], sOuterM[lane],
+                        scaleB[lane], sOuterB[lane]);
       }
     }
 

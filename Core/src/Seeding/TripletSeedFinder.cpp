@@ -296,21 +296,11 @@ class Impl final : public TripletSeedFinder {
     // The tops of the cotTheta window go through the strip checks a chunk at
     // a time, a lane per top, and the tops that pass them through the
     // remaining checks, in their order.
-    constexpr std::size_t kChunk = 8;
-    static_assert(kChunk <= 32, "a lane mask has one bit per lane");
+    constexpr std::size_t kLanes = 8;
     const float cotThetaDiffMax2 =
         m_cfg.cotThetaDiffMax * m_cfg.cotThetaDiffMax;
-    const auto tops = topDoublets.begin();
+    const auto beginTops = topDoublets.begin();
     const std::size_t nTops = topDoublets.size();
-
-    // A mask with the bit of each lane whose flag is 1
-    const auto laneMask = [](const std::array<std::uint32_t, kChunk>& flags) {
-      std::uint32_t mask = 0;
-      for (std::size_t lane = 0; lane < kChunk; ++lane) {
-        mask |= flags[lane] << lane;
-      }
-      return mask;
-    };
 
     // The checks of a top after its strip checks: the body of the original
     // loop over the tops, each return a continue of that loop. Adds the
@@ -474,53 +464,54 @@ class Impl final : public TripletSeedFinder {
     // the windows of the later bottoms too, so they are skipped from here on,
     // and the window ends at the first top above it, found by bisection.
     std::size_t topDoubletOffset = 0;
-    std::size_t endTop = nTops;
+    std::size_t topDoubletEnd = nTops;
     if constexpr (sortedByCotTheta) {
       const auto outside = [&](std::size_t k) {
-        const float deltaCotTheta = cotThetaB0 - tops[k].cotTheta();
+        const float deltaCotTheta = cotThetaB0 - beginTops[k].cotTheta();
         return deltaCotTheta * deltaCotTheta > cotThetaDiffMax2;
       };
       while (topDoubletOffset < nTops && outside(topDoubletOffset) &&
-             !(cotThetaB0 < tops[topDoubletOffset].cotTheta())) {
+             !(cotThetaB0 < beginTops[topDoubletOffset].cotTheta())) {
         ++topDoubletOffset;
       }
-      std::size_t lo = topDoubletOffset;
-      std::size_t hi = nTops;
-      while (lo < hi) {
-        const std::size_t mid = lo + (hi - lo) / 2;
-        if (outside(mid) && cotThetaB0 < tops[mid].cotTheta()) {
-          hi = mid;
+      std::size_t searchBegin = topDoubletOffset;
+      std::size_t searchEnd = nTops;
+      while (searchBegin < searchEnd) {
+        const std::size_t probe = searchBegin + (searchEnd - searchBegin) / 2;
+        if (outside(probe) && cotThetaB0 < beginTops[probe].cotTheta()) {
+          searchEnd = probe;
         } else {
-          lo = mid + 1;
+          searchBegin = probe + 1;
         }
       }
-      endTop = lo;
+      topDoubletEnd = searchBegin;
     }
 
     // 2.-6. The window's tops a chunk at a time. Each step is a loop of its
     // own over the lanes, the form compilers vectorise. Flags are 0 or 1.
-    for (std::size_t chunkBegin = topDoubletOffset; chunkBegin < endTop;
-         chunkBegin += kChunk) {
+    for (std::size_t chunkBegin = topDoubletOffset; chunkBegin < topDoubletEnd;
+         chunkBegin += kLanes) {
       // 2. the tops' conformal coordinates; the last chunk repeats its last
       // top in the lanes past the end
-      std::array<float, kChunk> u{};
-      std::array<float, kChunk> v{};
-      for (std::size_t lane = 0; lane < kChunk; ++lane) {
-        const auto top = tops[std::min(chunkBegin + lane, endTop - 1)];
+      std::array<float, kLanes> u{};
+      std::array<float, kLanes> v{};
+      for (std::size_t lane = 0; lane < kLanes; ++lane) {
+        const auto top =
+            beginTops[std::min(chunkBegin + lane, topDoubletEnd - 1)];
         u[lane] = top.u();
         v[lane] = top.v();
       }
 
       // 3. A0, divided by 1 where dU0 is 0; those tops fail the middle
       // strip check below, as the original loop skipped them
-      std::array<float, kChunk> dU0{};
-      std::array<float, kChunk> divisor{};
-      std::array<float, kChunk> A0{};
-      for (std::size_t lane = 0; lane < kChunk; ++lane) {
+      std::array<float, kLanes> dU0{};
+      std::array<float, kLanes> divisor{};
+      std::array<float, kLanes> A0{};
+      for (std::size_t lane = 0; lane < kLanes; ++lane) {
         dU0[lane] = u[lane] - Ub0;
         divisor[lane] = dU0[lane] != 0 ? dU0[lane] : 1.f;
       }
-      for (std::size_t lane = 0; lane < kChunk; ++lane) {
+      for (std::size_t lane = 0; lane < kLanes; ++lane) {
         A0[lane] = (v[lane] - Vb0) / divisor[lane];
       }
 
@@ -533,10 +524,10 @@ class Impl final : public TripletSeedFinder {
           calM.innerToOuterSeparationCrossOuterHalfVector;
       const auto& iosvCrossIhvM =
           calM.innerToOuterSeparationCrossInnerHalfVector;
-      std::array<float, kChunk> scaleM{};
-      std::array<float, kChunk> sOuterM{};
-      std::array<std::uint32_t, kChunk> passes{};
-      for (std::size_t lane = 0; lane < kChunk; ++lane) {
+      std::array<float, kLanes> scaleM{};
+      std::array<float, kLanes> sOuterM{};
+      std::array<std::uint32_t, kLanes> passes{};
+      for (std::size_t lane = 0; lane < kLanes; ++lane) {
         const float d0 =
             rotationTermsUVtoXY[0] - rotationTermsUVtoXY[1] * A0[lane];
         const float d1 =
@@ -556,10 +547,10 @@ class Impl final : public TripletSeedFinder {
             static_cast<std::uint32_t>(!(std::abs(sOuterM[lane]) > limit));
       }
 
-      // a chunk with no top passing the middle strip check is skipped
-      const std::uint32_t validLanes =
-          (std::uint32_t{1} << std::min(kChunk, endTop - chunkBegin)) - 1;
-      if ((laneMask(passes) & validLanes) == 0) {
+      // a chunk with no top passing the middle strip check is skipped; its
+      // lanes past the end repeat a top of the window
+      if (std::ranges::none_of(
+              passes, [](std::uint32_t passed) { return passed != 0; })) {
         continue;
       }
 
@@ -570,15 +561,15 @@ class Impl final : public TripletSeedFinder {
           calB.innerToOuterSeparationCrossOuterHalfVector;
       const auto& iosvCrossIhvB =
           calB.innerToOuterSeparationCrossInnerHalfVector;
-      std::array<float, kChunk> zDirectionMiddle{};
-      std::array<float, kChunk> B0{};
-      for (std::size_t lane = 0; lane < kChunk; ++lane) {
+      std::array<float, kLanes> zDirectionMiddle{};
+      std::array<float, kLanes> B0{};
+      for (std::size_t lane = 0; lane < kLanes; ++lane) {
         zDirectionMiddle[lane] = cosTheta * std::sqrt(1 + A0[lane] * A0[lane]);
         B0[lane] = 2 * (Vb0 - A0[lane] * Ub0);
       }
-      std::array<float, kChunk> scaleB{};
-      std::array<float, kChunk> sOuterB{};
-      for (std::size_t lane = 0; lane < kChunk; ++lane) {
+      std::array<float, kLanes> scaleB{};
+      std::array<float, kLanes> sOuterB{};
+      for (std::size_t lane = 0; lane < kLanes; ++lane) {
         const float Cb = 1 - B0[lane] * yBottom;
         const float Sb = A0[lane] + B0[lane] * xBottom;
         const float d0 =
@@ -600,13 +591,14 @@ class Impl final : public TripletSeedFinder {
       }
 
       // 6. the remaining checks of the tops that pass both, in their order
-      for (std::uint32_t passed = laneMask(passes) & validLanes; passed != 0;
-           passed &= passed - 1) {
-        const std::size_t lane = std::countr_zero(passed);
-        addTopCandidate(
-            tops[chunkBegin + lane],
-            {A0[lane], B0[lane], zDirectionMiddle[lane], scaleM[lane],
-             sOuterM[lane], scaleB[lane], sOuterB[lane]});
+      const std::size_t nLanes = std::min(kLanes, topDoubletEnd - chunkBegin);
+      for (std::size_t lane = 0; lane < nLanes; ++lane) {
+        if (passes[lane] != 0) {
+          addTopCandidate(
+              beginTops[chunkBegin + lane],
+              {A0[lane], B0[lane], zDirectionMiddle[lane], scaleM[lane],
+               sOuterM[lane], scaleB[lane], sOuterB[lane]});
+        }
       }
     }
 

@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <limits>
 #include <ranges>
+#include <span>
 #include <stdexcept>
 #include <type_traits>
 
@@ -165,9 +166,20 @@ class Impl final : public DoubletSeedFinder {
     // are scattered, so they go one at a time
     constexpr std::size_t kChunkSize = kContiguous ? 8 : 1;
 
-    detail::PerCandidate<float, kBlockSize> deltaR{};
-    detail::PerCandidate<float, kBlockSize> deltaZ{};
+    // One value per candidate of a block, or per survivor of its cuts on z
+    // and r. Not cleared: each entry is written before it is read.
+    // NOLINTBEGIN(cppcoreguidelines-pro-type-member-init)
+    detail::PerCandidate<float, kBlockSize> deltaR;
+    detail::PerCandidate<float, kBlockSize> deltaZ;
+    [[maybe_unused]] detail::PerCandidate<float, kBlockSize> xNewFrame;
+    [[maybe_unused]] detail::PerCandidate<float, kBlockSize> yNewFrame;
+    [[maybe_unused]] detail::PerCandidate<float, kBlockSize> iDeltaR2;
+    [[maybe_unused]] detail::PerCandidate<float, kBlockSize> uT;
+    [[maybe_unused]] detail::PerCandidate<float, kBlockSize> vT;
+    // NOLINTEND(cppcoreguidelines-pro-type-member-init)
     detail::PassFlags<kBlockSize> passes;
+    [[maybe_unused]] detail::PassFlags<kBlockSize> keep;
+    [[maybe_unused]] detail::PassFlags<kBlockSize> needsCurvatureCut;
 
     for (const detail::Block block : detail::blocks<kBlockSize>(0, end)) {
       block.forEach<kChunkSize>([&](std::size_t i, std::size_t k) {
@@ -208,7 +220,121 @@ class Impl final : public DoubletSeedFinder {
         passes[i] = static_cast<std::uint32_t>(!outside);
       });
 
-      for (const std::uint32_t i : passes.passing(block)) {
+      const std::span<const std::uint32_t> survivors = passes.passing(block);
+
+      // With the interaction point cut, the cuts that follow are made for
+      // every survivor of a block without a branch too: the time cut, the
+      // impact parameter test and the cotTheta cut, then the curvature cut
+      // only for the survivors it can still reject.
+      if constexpr (interactionPointCut && !stripCalibration) {
+        for (std::size_t s = 0; s < survivors.size(); ++s) {
+          const std::uint32_t i = survivors[s];
+          const SpacePointIndex indexO = candidateIndex(block.first + i);
+          const float xO = xy[indexO][0];
+          const float yO = xy[indexO][1];
+
+          // check the time compatibility of the two space points. the time
+          // difference is corrected for the time of flight along the straight
+          // line between them, assuming an outgoing particle at the speed of
+          // light (which is 1 in ACTS units)
+          bool inTime = true;
+          if constexpr (useTime) {
+            const ConstSpacePointProxy otherSp = container[indexO];
+            const float distance =
+                fastHypot(xO - xM, yO - yM, zr[indexO][0] - zM);
+            const float dt = isBottomCandidate ? tM - otherSp.time() - distance
+                                               : otherSp.time() - tM - distance;
+            const float varianceDt = varianceTM + otherSp.varianceT();
+            inTime = !(dt * dt > m_cfg.timeCutNSigma2 * varianceDt);
+          }
+
+          // transform SP coordinates to the u-v reference frame
+          const float deltaX = xO - xM;
+          const float deltaY = yO - yM;
+
+          xNewFrame[s] =
+              deltaX * middleSpInfo.cosPhiM + deltaY * middleSpInfo.sinPhiM;
+          yNewFrame[s] =
+              deltaY * middleSpInfo.cosPhiM - deltaX * middleSpInfo.sinPhiM;
+
+          const float deltaR2 = deltaX * deltaX + deltaY * deltaY;
+          iDeltaR2[s] = 1 / deltaR2;
+
+          uT[s] = xNewFrame[s] * iDeltaR2[s];
+          vT[s] = yNewFrame[s] * iDeltaR2[s];
+
+          // We check the interaction point by evaluating the minimal distance
+          // between the origin and the straight line connecting the two points
+          // in the doublets. Using a geometric similarity, the Im is given by
+          // yNewFrame * rM / deltaR > config.impactMax
+          // However, we make here an approximation of the impact parameter
+          // which is valid under the assumption yNewFrame / xNewFrame is small
+          // The correct computation would be:
+          // yNewFrame * yNewFrame * rM * rM > config.impactMax *
+          // config.impactMax * deltaR2
+          const bool ipTest =
+              std::abs(rM * yNewFrame[s]) > impactMax * xNewFrame[s];
+
+          // check if duplet cotTheta is within the region of interest
+          // cotTheta is defined as (deltaZ / deltaR) but instead we multiply
+          // cotThetaMax by deltaR to avoid division
+          const bool cutCotTheta =
+              outsideSymmetricRange(deltaZ[i], m_cfg.cotThetaMax * deltaR[i]);
+
+          // kept unless cut on time or cotTheta; where ipTest holds, the
+          // curvature cut below decides
+          keep[s] =
+              static_cast<std::uint32_t>(inTime && !cutCotTheta && !ipTest);
+          needsCurvatureCut[s] =
+              static_cast<std::uint32_t>(inTime && !cutCotTheta && ipTest);
+        }
+
+        for (const std::uint32_t s :
+             needsCurvatureCut.passing(survivors.size())) {
+          // in the rotated frame the interaction point is positioned at x =
+          // -rM and y ~= impactParam
+          const float vIP = (yNewFrame[s] > 0) ? -vIPAbs : vIPAbs;
+
+          // we can obtain aCoef as the slope dv/du of the linear function,
+          // estimated using du and dv between the two SP bCoef is obtained by
+          // inserting aCoef into the linear equation
+          const float aCoef = (vT[s] - vIP) / (uT[s] - middleSpInfo.uIP);
+          const float bCoef = vIP - aCoef * middleSpInfo.uIP;
+          // the distance of the straight line from the origin (radius of the
+          // circle) is related to aCoef and bCoef by d^2 = bCoef^2 / (1 +
+          // aCoef^2) = 1 / (radius^2) and we can apply the cut on the
+          // curvature
+          keep[s] = static_cast<std::uint32_t>(
+              !((bCoef * bCoef) * m_cfg.minHelixDiameter2 > 1 + aCoef * aCoef));
+        }
+
+        for (const std::uint32_t s : keep.passing(survivors.size())) {
+          const std::uint32_t i = survivors[s];
+          const SpacePointIndex indexO = candidateIndex(block.first + i);
+
+          const float iDeltaR = std::sqrt(iDeltaR2[s]);
+          const float cotTheta = deltaZ[i] * iDeltaR;
+
+          // discard doublets based on experiment specific cuts
+          if constexpr (experimentCuts) {
+            if (!m_cfg.experimentCuts(middleSp, container[indexO], cotTheta,
+                                      isBottomCandidate)) {
+              continue;
+            }
+          }
+
+          const float er = calculateError(varianceZ[indexO], varianceR[indexO],
+                                          iDeltaR2[s], cotTheta);
+
+          // fill output vectors
+          compatibleDoublets.emplace_back(indexO, cotTheta, iDeltaR, er, uT[s],
+                                          vT[s], xNewFrame[s], yNewFrame[s]);
+        }
+
+        continue;
+      }
+
+      for (const std::uint32_t i : survivors) {
         const SpacePointIndex indexO = candidateIndex(block.first + i);
         float xO = xy[indexO][0];
         float yO = xy[indexO][1];

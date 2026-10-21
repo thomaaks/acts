@@ -140,24 +140,18 @@ class Impl final : public DoubletSeedFinder {
     const auto varianceZ = container.varianceZColumn().data();
     const auto varianceR = container.varianceRColumn().data();
 
-    // The candidates by their position in candidateSps: a range of them is
-    // contiguous, a subset lists them.
-    constexpr bool kContiguous =
-        std::is_same_v<CandidateSps, SpacePointContainer::ConstRange>;
-    const auto candidateIndex = [&](std::size_t k) -> SpacePointIndex {
-      if constexpr (kContiguous) {
-        return candidateSps.range().first + k;
-      } else {
-        return candidateSps.subset()[k];
-      }
+    // A candidate's index in the container, by its position in candidateSps
+    const auto candidateIndex = [&](std::size_t k) {
+      return candidateSps[static_cast<SpacePointIndex>(k)].index();
     };
     // A candidate's z and r by its position; a range's by the offset from its
-    // first candidate, which cannot wrap around
+    // first candidate, without which the first pass is not vectorised
     const auto zrAt = [&](std::size_t k) -> const std::array<float, 2>& {
-      if constexpr (kContiguous) {
+      if constexpr (std::is_same_v<CandidateSps,
+                                   SpacePointContainer::ConstRange>) {
         return zr[candidateSps.range().first + k];
       } else {
-        return zr[candidateSps.subset()[k]];
+        return zr[candidateIndex(k)];
       }
     };
 
@@ -357,9 +351,8 @@ class Impl final : public DoubletSeedFinder {
     // The candidates go through in blocks, and each cut is a pass over the
     // candidates of a block that are left (see detail/BlockPass.hpp).
     constexpr std::size_t kBlockSize = 256;
-    // The candidates per step of the cuts on z and r: a subset's candidates
-    // are scattered, so they go one at a time
-    constexpr std::size_t kChunkSize = kContiguous ? 8 : 1;
+    // The candidates per step of the cuts on z and r
+    constexpr std::size_t kChunkSize = 8;
 
     // What the cuts compute for each candidate of a block, for the cuts after
     // them. Not cleared: each entry is written before it is read. The

@@ -12,12 +12,21 @@
 #include "Acts/SpacePointFormation/detail/StripSpacePointCalibrationImpl.hpp"
 #include "Acts/Utilities/MathHelpers.hpp"
 
+#include <algorithm>
 #include <array>
+#include <cassert>
+#include <cmath>
+#include <cstdint>
+#include <optional>
+#include <ranges>
+#include <span>
 #include <stdexcept>
+#include <type_traits>
 
 #include <boost/mp11.hpp>
 #include <boost/mp11/algorithm.hpp>
 
+#include "detail/BlockPass.hpp"
 #include "detail/SortByKey.hpp"
 
 namespace Acts {
@@ -113,6 +122,11 @@ class Impl final : public DoubletSeedFinder {
       return static_cast<bool>(static_cast<int>(value < min) |
                                static_cast<int>(value > max));
     };
+    // The deltaZ, collision region and cotTheta ranges are symmetric about
+    // zero, so each is tested with one comparison.
+    const auto outsideSymmetricRange = [](const float value, const float max) {
+      return std::abs(value) > max;
+    };
 
     const auto calculateError = [&](float varianceZO, float varianceRO,
                                     float iDeltaR2, float cotTheta) {
@@ -121,51 +135,82 @@ class Impl final : public DoubletSeedFinder {
     };
 
     const SpacePointContainer& container = candidateSps.container();
-    for (auto [indexO, xyO, zrO, varianceZO, varianceRO] : candidateSps.zip(
-             container.xyColumn(), container.zrColumn(),
-             container.varianceZColumn(), container.varianceRColumn())) {
-      float xO = xyO[0];
-      float yO = xyO[1];
-      float zO = zrO[0];
-      const float rO = zrO[1];
+    const auto xy = container.xyColumn().data();
+    const auto zr = container.zrColumn().data();
+    const auto varianceZ = container.varianceZColumn().data();
+    const auto varianceR = container.varianceRColumn().data();
 
-      float deltaR = 0;
-      if constexpr (isBottomCandidate) {
-        deltaR = rM - rO;
-
-        if constexpr (sortedByR) {
-          // if r-distance is too small we are done
-          if (deltaR < m_cfg.deltaRMin) {
-            break;
-          }
-        }
+    // The candidates by their position in candidateSps: a range of them is
+    // contiguous, a subset lists them.
+    constexpr bool kContiguous =
+        std::is_same_v<CandidateSps, SpacePointContainer::ConstRange>;
+    const auto candidateIndex = [&](std::size_t k) -> SpacePointIndex {
+      if constexpr (kContiguous) {
+        return candidateSps.range().first + k;
       } else {
-        deltaR = rO - rM;
-
-        if constexpr (sortedByR) {
-          // if r-distance is too big we are done
-          if (deltaR > m_cfg.deltaRMax) {
-            break;
-          }
-        }
+        return candidateSps.subset()[k];
       }
+    };
+    // A candidate's z and r by its position; a range's by the offset from its
+    // first candidate, which cannot wrap around
+    const auto zrAt = [&](std::size_t k) -> const std::array<float, 2>& {
+      if constexpr (kContiguous) {
+        return zr[candidateSps.range().first + k];
+      } else {
+        return zr[candidateSps.subset()[k]];
+      }
+    };
 
+    // Sorted by radius, the candidates inside deltaR end at the first one
+    // outside it.
+    std::size_t end = candidateSps.size();
+    if constexpr (sortedByR) {
+      const auto rOf = [&](std::size_t k) { return zrAt(k)[1]; };
+      assert(std::ranges::is_sorted(std::views::iota(std::size_t{0}, end), {},
+                                    rOf));
+      end = *std::ranges::partition_point(
+          std::views::iota(std::size_t{0}, end), [&](std::size_t k) {
+            return isBottomCandidate ? !(rM - rOf(k) < m_cfg.deltaRMin)
+                                     : !(rOf(k) - rM > m_cfg.deltaRMax);
+          });
+    }
+
+    // ---- The cuts ----------------------------------------------------------
+
+    // The middle space point as the cuts after the strip calibration see it:
+    // calibrated against the doublet's chord if enabled, as it is otherwise.
+    struct MiddleFrame {
+      float x;
+      float y;
+      float r;
+      float uIP;
+      float vIPAbs;
+    };
+    const MiddleFrame middle{xM, yM, rM, middleSpInfo.uIP, vIPAbs};
+
+    // The candidate in the u-v reference frame of the middle space point.
+    struct UvFrame {
+      float xNewFrame;
+      float yNewFrame;
+      float uT;
+      float vT;
+      float iDeltaR2;
+    };
+
+    // The cuts that need only the candidate's z and r: deltaR, deltaZ and the
+    // collision region. The config values they read are copied, so that they
+    // are loaded once rather than for every candidate.
+    const float deltaRMin = m_cfg.deltaRMin;
+    const float deltaRMax = m_cfg.deltaRMax;
+    const float deltaZMax = m_cfg.deltaZMax;
+    const float collisionRegionMax = m_cfg.collisionRegionMax;
+    const auto passesZAndRCuts = [=](float deltaR, float deltaZ) {
+      bool outside = false;
       if constexpr (!sortedByR) {
-        if (outsideRangeCheck(deltaR, m_cfg.deltaRMin, m_cfg.deltaRMax)) {
-          continue;
-        }
+        outside = outsideRangeCheck(deltaR, deltaRMin, deltaRMax);
       }
 
-      float deltaZ = 0;
-      if constexpr (isBottomCandidate) {
-        deltaZ = zM - zO;
-      } else {
-        deltaZ = zO - zM;
-      }
-
-      if (outsideRangeCheck(deltaZ, m_cfg.deltaZMin, m_cfg.deltaZMax)) {
-        continue;
-      }
+      outside |= outsideSymmetricRange(deltaZ, deltaZMax);
 
       // the longitudinal impact parameter zOrigin is defined as (zM - rM *
       // cotTheta) where cotTheta is the ratio Z/R (forward angle) of space
@@ -173,123 +218,77 @@ class Impl final : public DoubletSeedFinder {
       // collisionRegion by deltaR to avoid divisions
       const float zOriginTimesDeltaR = zM * deltaR - rM * deltaZ;
       // check if duplet origin on z axis within collision region
-      if (outsideRangeCheck(zOriginTimesDeltaR,
-                            m_cfg.collisionRegionMin * deltaR,
-                            m_cfg.collisionRegionMax * deltaR)) {
-        continue;
+      outside |= outsideSymmetricRange(zOriginTimesDeltaR,
+                                       collisionRegionMax * deltaR);
+
+      return !outside;
+    };
+
+    // check the time compatibility of the two space points. the time
+    // difference is corrected for the time of flight along the straight line
+    // between them, assuming an outgoing particle at the speed of light
+    // (which is 1 in ACTS units)
+    const auto inTime = [&](SpacePointIndex indexO) {
+      const ConstSpacePointProxy otherSp = container[indexO];
+      const float distance =
+          fastHypot(xy[indexO][0] - xM, xy[indexO][1] - yM, zr[indexO][0] - zM);
+      float dt = 0;
+      if constexpr (isBottomCandidate) {
+        dt = tM - otherSp.time() - distance;
+      } else {
+        dt = otherSp.time() - tM - distance;
+      }
+      const float varianceDt = varianceTM + otherSp.varianceT();
+      return !(dt * dt > m_cfg.timeCutNSigma2 * varianceDt);
+    };
+
+    // calibrate both space points against their chord; the cuts after it and
+    // the doublet use the calibrated positions
+    struct Calibrated {
+      MiddleFrame middle;
+      std::array<float, 2> xyO;
+      float deltaR;
+      float deltaZ;
+    };
+    [[maybe_unused]] const auto calibrate =
+        [&](SpacePointIndex indexO) -> std::optional<Calibrated> {
+      const std::array<float, 3> chord{xy[indexO][0] - xM, xy[indexO][1] - yM,
+                                       zr[indexO][0] - zM};
+      std::array<float, 3> calibratedM{};
+      std::array<float, 3> calibratedO{};
+      if (!detail::calibrateOuterStripSpacePoint(
+              chord, calibrationM, calibratedM, calibrationTolerance) ||
+          !detail::calibrateOuterStripSpacePoint(
+              chord,
+              detail::deriveOuterStripSpacePointCalibrationDetails(
+                  container[indexO].outerStripCalibrationDetails()),
+              calibratedO, calibrationTolerance)) {
+        return std::nullopt;
       }
 
-      // check the time compatibility of the two space points. the time
-      // difference is corrected for the time of flight along the straight line
-      // between them, assuming an outgoing particle at the speed of light
-      // (which is 1 in ACTS units). placed after the cheap range checks above
-      // to avoid the square root for candidates that are rejected anyway
-      if constexpr (useTime) {
-        const ConstSpacePointProxy otherSp = container[indexO];
-        const float distance = fastHypot(xO - xM, yO - yM, zO - zM);
-        float dt = 0;
-        if constexpr (isBottomCandidate) {
-          dt = tM - otherSp.time() - distance;
-        } else {
-          dt = otherSp.time() - tM - distance;
-        }
-        const float varianceDt = varianceTM + otherSp.varianceT();
-        if (dt * dt > m_cfg.timeCutNSigma2 * varianceDt) {
-          continue;
-        }
-      }
+      const float rMd = fastHypot(calibratedM[0], calibratedM[1]);
+      const float uIP = -1 / rMd;
+      const float rOd = fastHypot(calibratedO[0], calibratedO[1]);
+      return Calibrated{
+          {calibratedM[0], calibratedM[1], rMd, uIP, impactMax * uIP * uIP},
+          {calibratedO[0], calibratedO[1]},
+          isBottomCandidate ? rMd - rOd : rOd - rMd,
+          isBottomCandidate ? calibratedM[2] - calibratedO[2]
+                            : calibratedO[2] - calibratedM[2]};
+    };
 
-      // middle space point of this doublet, calibrated if enabled
-      float xMd = xM;
-      float yMd = yM;
-      float rMd = rM;
-      float uIP = middleSpInfo.uIP;
-      float vIPAbsD = vIPAbs;
+    // check if duplet cotTheta is within the region of interest
+    // cotTheta is defined as (deltaZ / deltaR) but instead we multiply
+    // cotThetaMax by deltaR to avoid division
+    const auto passesCotThetaCut = [&](float deltaR, float deltaZ) {
+      return !outsideSymmetricRange(deltaZ, m_cfg.cotThetaMax * deltaR);
+    };
 
-      // calibrate both space points against their chord
-      if constexpr (stripCalibration) {
-        const std::array<float, 3> chord{xO - xM, yO - yM, zO - zM};
-        std::array<float, 3> calibratedM{};
-        std::array<float, 3> calibratedO{};
-        if (!detail::calibrateOuterStripSpacePoint(
-                chord, calibrationM, calibratedM, calibrationTolerance) ||
-            !detail::calibrateOuterStripSpacePoint(
-                chord,
-                detail::deriveOuterStripSpacePointCalibrationDetails(
-                    container[indexO].outerStripCalibrationDetails()),
-                calibratedO, calibrationTolerance)) {
-          continue;
-        }
-
-        xMd = calibratedM[0];
-        yMd = calibratedM[1];
-        rMd = fastHypot(xMd, yMd);
-        uIP = -1 / rMd;
-        vIPAbsD = impactMax * uIP * uIP;
-
-        xO = calibratedO[0];
-        yO = calibratedO[1];
-        zO = calibratedO[2];
-        const float rOd = fastHypot(xO, yO);
-
-        deltaR = isBottomCandidate ? rMd - rOd : rOd - rMd;
-        deltaZ = isBottomCandidate ? calibratedM[2] - zO : zO - calibratedM[2];
-      }
-
-      // if interactionPointCut is false we apply z cuts before coordinate
-      // transformation to avoid unnecessary calculations. If
-      // interactionPointCut is true we apply the curvature cut first because it
-      // is more frequent but requires the coordinate transformation
-      if constexpr (!interactionPointCut) {
-        // check if duplet cotTheta is within the region of interest
-        // cotTheta is defined as (deltaZ / deltaR) but instead we multiply
-        // cotThetaMax by deltaR to avoid division
-        if (outsideRangeCheck(deltaZ, -m_cfg.cotThetaMax * deltaR,
-                              m_cfg.cotThetaMax * deltaR)) {
-          continue;
-        }
-
-        // transform SP coordinates to the u-v reference frame
-        const float deltaX = xO - xMd;
-        const float deltaY = yO - yMd;
-
-        const float xNewFrame =
-            deltaX * middleSpInfo.cosPhiM + deltaY * middleSpInfo.sinPhiM;
-        const float yNewFrame =
-            deltaY * middleSpInfo.cosPhiM - deltaX * middleSpInfo.sinPhiM;
-
-        const float deltaR2 = deltaX * deltaX + deltaY * deltaY;
-        const float iDeltaR2 = 1 / deltaR2;
-
-        const float uT = xNewFrame * iDeltaR2;
-        const float vT = yNewFrame * iDeltaR2;
-
-        const float iDeltaR = std::sqrt(iDeltaR2);
-        const float cotTheta = deltaZ * iDeltaR;
-
-        // discard doublets based on experiment specific cuts (also applied
-        // here, in the interactionPointCut == false branch, not only in the
-        // branch below -- otherwise the cut would silently never run when the
-        // IP cut is disabled)
-        if constexpr (experimentCuts) {
-          if (!m_cfg.experimentCuts(middleSp, container[indexO], cotTheta,
-                                    isBottomCandidate)) {
-            continue;
-          }
-        }
-
-        const float er =
-            calculateError(varianceZO, varianceRO, iDeltaR2, cotTheta);
-
-        // fill output vectors
-        compatibleDoublets.emplace_back(indexO, cotTheta, iDeltaR, er, uT, vT,
-                                        xNewFrame, yNewFrame);
-        continue;
-      }
-
-      // transform SP coordinates to the u-v reference frame
-      const float deltaX = xO - xMd;
-      const float deltaY = yO - yMd;
+    // transform SP coordinates to the u-v reference frame
+    const auto transform = [&](const std::array<float, 2>& xyO,
+                               const MiddleFrame& mid) {
+      const float deltaX = xyO[0] - mid.x;
+      const float deltaY = xyO[1] - mid.y;
 
       const float xNewFrame =
           deltaX * middleSpInfo.cosPhiM + deltaY * middleSpInfo.sinPhiM;
@@ -299,62 +298,146 @@ class Impl final : public DoubletSeedFinder {
       const float deltaR2 = deltaX * deltaX + deltaY * deltaY;
       const float iDeltaR2 = 1 / deltaR2;
 
-      const float uT = xNewFrame * iDeltaR2;
-      const float vT = yNewFrame * iDeltaR2;
+      return UvFrame{xNewFrame, yNewFrame, xNewFrame * iDeltaR2,
+                     yNewFrame * iDeltaR2, iDeltaR2};
+    };
 
-      // We check the interaction point by evaluating the minimal distance
-      // between the origin and the straight line connecting the two points in
-      // the doublets. Using a geometric similarity, the Im is given by
-      // yNewFrame * rM / deltaR > config.impactMax
-      // However, we make here an approximation of the impact parameter
-      // which is valid under the assumption yNewFrame / xNewFrame is small
-      // The correct computation would be:
-      // yNewFrame * yNewFrame * rM * rM > config.impactMax *
-      // config.impactMax * deltaR2
-      if (std::abs(rMd * yNewFrame) > impactMax * xNewFrame) {
-        // in the rotated frame the interaction point is positioned at x = -rM
-        // and y ~= impactParam
-        const float vIP = (yNewFrame > 0) ? -vIPAbsD : vIPAbsD;
+    // We check the interaction point by evaluating the minimal distance
+    // between the origin and the straight line connecting the two points in
+    // the doublets. Using a geometric similarity, the Im is given by
+    // yNewFrame * rM / deltaR > config.impactMax
+    // However, we make here an approximation of the impact parameter
+    // which is valid under the assumption yNewFrame / xNewFrame is small
+    // The correct computation would be:
+    // yNewFrame * yNewFrame * rM * rM > config.impactMax *
+    // config.impactMax * deltaR2
+    const auto ipTest = [&](const UvFrame& uv, const MiddleFrame& mid) {
+      return std::abs(mid.r * uv.yNewFrame) > impactMax * uv.xNewFrame;
+    };
 
-        // we can obtain aCoef as the slope dv/du of the linear function,
-        // estimated using du and dv between the two SP bCoef is obtained by
-        // inserting aCoef into the linear equation
-        const float aCoef = (vT - vIP) / (uT - uIP);
-        const float bCoef = vIP - aCoef * uIP;
-        // the distance of the straight line from the origin (radius of the
-        // circle) is related to aCoef and bCoef by d^2 = bCoef^2 / (1 +
-        // aCoef^2) = 1 / (radius^2) and we can apply the cut on the curvature
-        if ((bCoef * bCoef) * m_cfg.minHelixDiameter2 > 1 + aCoef * aCoef) {
-          continue;
-        }
-      }
+    // the curvature cut, for a doublet whose impact parameter is too large
+    const auto passesCurvatureCut = [&](const UvFrame& uv,
+                                        const MiddleFrame& mid) {
+      // in the rotated frame the interaction point is positioned at x = -rM
+      // and y ~= impactParam
+      const float vIP = (uv.yNewFrame > 0) ? -mid.vIPAbs : mid.vIPAbs;
 
-      // check if duplet cotTheta is within the region of interest
-      // cotTheta is defined as (deltaZ / deltaR) but instead we multiply
-      // cotThetaMax by deltaR to avoid division
-      if (outsideRangeCheck(deltaZ, -m_cfg.cotThetaMax * deltaR,
-                            m_cfg.cotThetaMax * deltaR)) {
-        continue;
-      }
+      // we can obtain aCoef as the slope dv/du of the linear function,
+      // estimated using du and dv between the two SP bCoef is obtained by
+      // inserting aCoef into the linear equation
+      const float aCoef = (uv.vT - vIP) / (uv.uT - mid.uIP);
+      const float bCoef = vIP - aCoef * mid.uIP;
+      // the distance of the straight line from the origin (radius of the
+      // circle) is related to aCoef and bCoef by d^2 = bCoef^2 / (1 +
+      // aCoef^2) = 1 / (radius^2) and we can apply the cut on the curvature
+      return !((bCoef * bCoef) * m_cfg.minHelixDiameter2 > 1 + aCoef * aCoef);
+    };
 
-      const float iDeltaR = std::sqrt(iDeltaR2);
+    // discard doublets based on experiment specific cuts
+    const auto passesExperimentCut = [&](SpacePointIndex indexO, float deltaZ,
+                                         const UvFrame& uv) {
+      const float cotTheta = deltaZ * std::sqrt(uv.iDeltaR2);
+      return m_cfg.experimentCuts(middleSp, container[indexO], cotTheta,
+                                  isBottomCandidate);
+    };
+
+    // fill output vectors
+    const auto addDoublet = [&](SpacePointIndex indexO, float deltaZ,
+                                const UvFrame& uv) {
+      const float iDeltaR = std::sqrt(uv.iDeltaR2);
       const float cotTheta = deltaZ * iDeltaR;
+      const float er = calculateError(varianceZ[indexO], varianceR[indexO],
+                                      uv.iDeltaR2, cotTheta);
+      compatibleDoublets.emplace_back(indexO, cotTheta, iDeltaR, er, uv.uT,
+                                      uv.vT, uv.xNewFrame, uv.yNewFrame);
+    };
 
-      // discard doublets based on experiment specific cuts
-      if constexpr (experimentCuts) {
-        if (!m_cfg.experimentCuts(middleSp, container[indexO], cotTheta,
-                                  isBottomCandidate)) {
-          continue;
-        }
+    // ---- The block pass ----------------------------------------------------
+
+    // The candidates go through in blocks, and each cut is a pass over the
+    // candidates of a block that are left (see detail/BlockPass.hpp).
+    constexpr std::size_t kBlockSize = 256;
+    // The candidates per step of the cuts on z and r: a subset's candidates
+    // are scattered, so they go one at a time
+    constexpr std::size_t kChunkSize = kContiguous ? 8 : 1;
+
+    // What the cuts compute for each candidate of a block, for the cuts after
+    // them. Not cleared: each entry is written before it is read. The
+    // calibrated positions are only kept with the strip calibration.
+    constexpr std::size_t kCalibrated = stripCalibration ? kBlockSize : 0;
+    // NOLINTBEGIN(cppcoreguidelines-pro-type-member-init)
+    detail::PerCandidate<float, kBlockSize> deltaR;
+    detail::PerCandidate<float, kBlockSize> deltaZ;
+    detail::PerCandidate<UvFrame, kBlockSize> uv;
+    [[maybe_unused]] std::array<MiddleFrame, kCalibrated> calibratedMiddle;
+    [[maybe_unused]] std::array<std::array<float, 2>, kCalibrated> calibratedXY;
+    // NOLINTEND(cppcoreguidelines-pro-type-member-init)
+
+    // The middle space point and the candidate's x and y as the cuts after
+    // the strip calibration see them
+    const auto middleOf = [&](std::size_t i) -> const MiddleFrame& {
+      if constexpr (stripCalibration) {
+        return calibratedMiddle[i];
+      } else {
+        return middle;
       }
+    };
+    const auto xyOf = [&](std::size_t i,
+                          std::size_t k) -> const std::array<float, 2>& {
+      if constexpr (stripCalibration) {
+        return calibratedXY[i];
+      } else {
+        return xy[candidateIndex(k)];
+      }
+    };
 
-      const float er =
-          calculateError(varianceZO, varianceRO, iDeltaR2, cotTheta);
-
-      // fill output vectors
-      compatibleDoublets.emplace_back(indexO, cotTheta, iDeltaR, er, uT, vT,
-                                      xNewFrame, yNewFrame);
-    }
+    // Each pass is called with a candidate's index in its block, i, and its
+    // position, k.
+    detail::runBlockPass<kBlockSize, kChunkSize>(
+        0, end,
+        detail::passes(
+            [&](std::size_t i, std::size_t k) {
+              const std::array<float, 2>& zrO = zrAt(k);
+              deltaR[i] = isBottomCandidate ? rM - zrO[1] : zrO[1] - rM;
+              deltaZ[i] = isBottomCandidate ? zM - zrO[0] : zrO[0] - zM;
+              return passesZAndRCuts(deltaR[i], deltaZ[i]);
+            },
+            detail::passIf<useTime>([&](std::size_t /*i*/, std::size_t k) {
+              return inTime(candidateIndex(k));
+            }),
+            detail::passIf<stripCalibration>([&](std::size_t i, std::size_t k) {
+              if constexpr (stripCalibration) {
+                const std::optional<Calibrated> calibrated =
+                    calibrate(candidateIndex(k));
+                if (!calibrated) {
+                  return false;
+                }
+                calibratedMiddle[i] = calibrated->middle;
+                calibratedXY[i] = calibrated->xyO;
+                deltaR[i] = calibrated->deltaR;
+                deltaZ[i] = calibrated->deltaZ;
+              }
+              return true;
+            }),
+            [&](std::size_t i, std::size_t /*k*/) {
+              return passesCotThetaCut(deltaR[i], deltaZ[i]);
+            },
+            [&](std::size_t i, std::size_t k) {
+              uv[i] = transform(xyOf(i, k), middleOf(i));
+            },
+            detail::passIf<interactionPointCut>(detail::onlyWhere(
+                [&](std::size_t i, std::size_t /*k*/) {
+                  return ipTest(uv[i], middleOf(i));
+                },
+                [&](std::size_t i, std::size_t /*k*/) {
+                  return passesCurvatureCut(uv[i], middleOf(i));
+                })),
+            detail::passIf<experimentCuts>([&](std::size_t i, std::size_t k) {
+              return passesExperimentCut(candidateIndex(k), deltaZ[i], uv[i]);
+            })),
+        [&](std::size_t i, std::size_t k) {
+          addDoublet(candidateIndex(k), deltaZ[i], uv[i]);
+        });
   }
 
   void createDoublets(const ConstSpacePointProxy& middleSp,
@@ -445,6 +528,17 @@ std::unique_ptr<DoubletSeedFinder> DoubletSeedFinder::create(
 DoubletSeedFinder::DerivedConfig::DerivedConfig(const Config& config,
                                                 float bFieldInZ_)
     : Config(config), bFieldInZ(bFieldInZ_) {
+  // The deltaZ and collision region cuts are symmetric about zero and use
+  // only the maxima
+  if (deltaZMin != -deltaZMax) {
+    throw std::invalid_argument(
+        "DoubletSeedFinder: deltaZMin must be -deltaZMax");
+  }
+  if (collisionRegionMin != -collisionRegionMax) {
+    throw std::invalid_argument(
+        "DoubletSeedFinder: collisionRegionMin must be -collisionRegionMax");
+  }
+
   // bFieldInZ is in (pT/radius) natively, no need for conversion
   const float pTPerHelixRadius = bFieldInZ;
   minHelixDiameter2 = square(minPt * 2 / pTPerHelixRadius) * helixCutTolerance;

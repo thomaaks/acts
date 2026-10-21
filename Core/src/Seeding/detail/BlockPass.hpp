@@ -44,10 +44,10 @@ std::span<out_t> collectFlagged(std::span<const std::uint32_t> flags,
 /// @tparam kBlockSize the number of positions per block
 /// @tparam kChunkSize the number of positions per step of the cut's loop; a
 ///   length known at compile time lets each step be vectorised
-/// @param passes the cut, called with a position, returning 1 if it passes
-///   and 0 if not
-/// @param process called with the passing positions of a block, in order, for
-///   each block that has any
+/// @param passes the cut, called with a position in [@p begin, @p end),
+///   returning 1 if it passes and 0 if not
+/// @param process called with the passing positions of a block, in
+///   [@p begin, @p end) and in order, for each block that has any
 template <std::size_t kBlockSize, std::size_t kChunkSize, typename passes_t,
           typename process_t>
 void forEachPassingBlock(std::uint32_t begin, std::uint32_t end,

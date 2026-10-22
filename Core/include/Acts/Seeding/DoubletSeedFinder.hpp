@@ -57,7 +57,7 @@ class DoubletsForMiddleSp {
   /// @param y Y coordinate
   void emplace_back(SpacePointIndex sp, float cotTheta, float iDeltaR, float er,
                     float u, float v, float x, float y) {
-    m_doublets.push_back({sp, cotTheta, iDeltaR, er, u, v, x, y});
+    m_doublets.emplace_back(sp, cotTheta, iDeltaR, er, u, v, x, y);
   }
 
   /// Pair of doublet index and cotTheta value.
@@ -96,10 +96,66 @@ class DoubletsForMiddleSp {
                       std::vector<IndexAndCotTheta>& indexAndCotTheta,
                       SortStorage& storage) const;
 
- private:
-  struct Doublet;
+  /// One doublet's parameters, stored as one record.
+  class Doublet {
+   public:
+    /// Constructor
+    /// @param spacePoint Space point index for the doublet
+    /// @param cotTheta Cotangent of theta
+    /// @param iDeltaR Inverse delta R
+    /// @param er Error term
+    /// @param u U coordinate
+    /// @param v V coordinate
+    /// @param x X coordinate
+    /// @param y Y coordinate
+    Doublet(SpacePointIndex spacePoint, float cotTheta, float iDeltaR,
+            float er, float u, float v, float x, float y)
+        : m_spacePoint(spacePoint),
+          m_cotTheta(cotTheta),
+          m_iDeltaR(iDeltaR),
+          m_er(er),
+          m_u(u),
+          m_v(v),
+          m_x(x),
+          m_y(y) {}
 
- public:
+    /// Get space point index
+    /// @return The space point index
+    SpacePointIndex spacePointIndex() const { return m_spacePoint; }
+    /// Get cotangent of theta
+    /// @return The cotTheta value
+    float cotTheta() const { return m_cotTheta; }
+    /// Get er value
+    /// @return The er value
+    float er() const { return m_er; }
+    /// Get inverse delta r
+    /// @return The inverse delta r value
+    float iDeltaR() const { return m_iDeltaR; }
+    /// Get u coordinate
+    /// @return The u value
+    float u() const { return m_u; }
+    /// Get v coordinate
+    /// @return The v value
+    float v() const { return m_v; }
+    /// Get x coordinate
+    /// @return The x value
+    float x() const { return m_x; }
+    /// Get y coordinate
+    /// @return The y value
+    float y() const { return m_y; }
+
+   private:
+    SpacePointIndex m_spacePoint{};
+    // parameters required to calculate a circle with linear equation
+    float m_cotTheta{};
+    float m_iDeltaR{};
+    float m_er{};
+    float m_u{};
+    float m_v{};
+    float m_x{};
+    float m_y{};
+  };
+
   /// Proxy accessor for a single doublet entry.
   class Proxy {
    public:
@@ -117,34 +173,37 @@ class DoubletsForMiddleSp {
     /// Get the doublet index
     /// @return The index
     Index index() const { return m_index; }
+    /// Get the doublet record
+    /// @return Reference to the record
+    const Doublet& doublet() const { return *m_doublet; }
 
     /// Get space point index pair
     /// @return The space point index
     SpacePointIndex spacePointIndex() const {
-      return m_doublet->spacePoint;
+      return m_doublet->spacePointIndex();
     }
 
     /// Get cotangent of theta
     /// @return The cotTheta value
-    float cotTheta() const { return m_doublet->cotTheta; }
+    float cotTheta() const { return m_doublet->cotTheta(); }
     /// Get er value
     /// @return The er value
-    float er() const { return m_doublet->er; }
+    float er() const { return m_doublet->er(); }
     /// Get inverse delta r
     /// @return The inverse delta r value
-    float iDeltaR() const { return m_doublet->iDeltaR; }
+    float iDeltaR() const { return m_doublet->iDeltaR(); }
     /// Get u coordinate
     /// @return The u value
-    float u() const { return m_doublet->u; }
+    float u() const { return m_doublet->u(); }
     /// Get v coordinate
     /// @return The v value
-    float v() const { return m_doublet->v; }
+    float v() const { return m_doublet->v(); }
     /// Get x coordinate
     /// @return The x value
-    float x() const { return m_doublet->x; }
+    float x() const { return m_doublet->x(); }
     /// Get y coordinate
     /// @return The y value
-    float y() const { return m_doublet->y; }
+    float y() const { return m_doublet->y(); }
 
    private:
     const DoubletsForMiddleSp* m_container{};
@@ -253,17 +312,6 @@ class DoubletsForMiddleSp {
 
  private:
   // one record a doublet, as the triplet finder reads all of a doublet at once
-  struct Doublet {
-    SpacePointIndex spacePoint{};
-    // parameters required to calculate a circle with linear equation
-    float cotTheta{};
-    float iDeltaR{};
-    float er{};
-    float u{};
-    float v{};
-    float x{};
-    float y{};
-  };
   std::vector<Doublet> m_doublets;
 };
 

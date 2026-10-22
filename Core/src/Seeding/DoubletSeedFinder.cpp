@@ -15,7 +15,6 @@
 #include <algorithm>
 #include <array>
 #include <cassert>
-#include <cmath>
 #include <cstdint>
 #include <optional>
 #include <ranges>
@@ -122,11 +121,6 @@ class Impl final : public DoubletSeedFinder {
       return static_cast<bool>(static_cast<int>(value < min) |
                                static_cast<int>(value > max));
     };
-    // The deltaZ, collision region and cotTheta ranges are symmetric about
-    // zero, so each is tested with one comparison.
-    const auto outsideSymmetricRange = [](const float value, const float max) {
-      return std::abs(value) > max;
-    };
 
     const auto calculateError = [&](float varianceZO, float varianceRO,
                                     float iDeltaR2, float cotTheta) {
@@ -196,7 +190,9 @@ class Impl final : public DoubletSeedFinder {
     // are loaded once rather than for every candidate.
     const float deltaRMin = m_cfg.deltaRMin;
     const float deltaRMax = m_cfg.deltaRMax;
+    const float deltaZMin = m_cfg.deltaZMin;
     const float deltaZMax = m_cfg.deltaZMax;
+    const float collisionRegionMin = m_cfg.collisionRegionMin;
     const float collisionRegionMax = m_cfg.collisionRegionMax;
     const auto passesZAndRCuts = [=](float deltaR, float deltaZ) {
       bool outside = false;
@@ -204,7 +200,7 @@ class Impl final : public DoubletSeedFinder {
         outside = outsideRangeCheck(deltaR, deltaRMin, deltaRMax);
       }
 
-      outside |= outsideSymmetricRange(deltaZ, deltaZMax);
+      outside |= outsideRangeCheck(deltaZ, deltaZMin, deltaZMax);
 
       // the longitudinal impact parameter zOrigin is defined as (zM - rM *
       // cotTheta) where cotTheta is the ratio Z/R (forward angle) of space
@@ -212,8 +208,9 @@ class Impl final : public DoubletSeedFinder {
       // collisionRegion by deltaR to avoid divisions
       const float zOriginTimesDeltaR = zM * deltaR - rM * deltaZ;
       // check if duplet origin on z axis within collision region
-      outside |= outsideSymmetricRange(zOriginTimesDeltaR,
-                                       collisionRegionMax * deltaR);
+      outside |=
+          outsideRangeCheck(zOriginTimesDeltaR, collisionRegionMin * deltaR,
+                            collisionRegionMax * deltaR);
 
       return !outside;
     };
@@ -275,7 +272,8 @@ class Impl final : public DoubletSeedFinder {
     // cotTheta is defined as (deltaZ / deltaR) but instead we multiply
     // cotThetaMax by deltaR to avoid division
     const auto passesCotThetaCut = [&](float deltaR, float deltaZ) {
-      return !outsideSymmetricRange(deltaZ, m_cfg.cotThetaMax * deltaR);
+      return !outsideRangeCheck(deltaZ, -m_cfg.cotThetaMax * deltaR,
+                                m_cfg.cotThetaMax * deltaR);
     };
 
     // transform SP coordinates to the u-v reference frame
@@ -521,17 +519,6 @@ std::unique_ptr<DoubletSeedFinder> DoubletSeedFinder::create(
 DoubletSeedFinder::DerivedConfig::DerivedConfig(const Config& config,
                                                 float bFieldInZ_)
     : Config(config), bFieldInZ(bFieldInZ_) {
-  // The deltaZ and collision region cuts are symmetric about zero and use
-  // only the maxima
-  if (deltaZMin != -deltaZMax) {
-    throw std::invalid_argument(
-        "DoubletSeedFinder: deltaZMin must be -deltaZMax");
-  }
-  if (collisionRegionMin != -collisionRegionMax) {
-    throw std::invalid_argument(
-        "DoubletSeedFinder: collisionRegionMin must be -collisionRegionMax");
-  }
-
   // bFieldInZ is in (pT/radius) natively, no need for conversion
   const float pTPerHelixRadius = bFieldInZ;
   minHelixDiameter2 = square(minPt * 2 / pTPerHelixRadius) * helixCutTolerance;

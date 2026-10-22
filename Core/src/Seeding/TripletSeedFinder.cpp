@@ -516,10 +516,10 @@ class Impl final : public TripletSeedFinder {
     }
   }
 
-  DoubletsForMiddleSp::Subset2 createTripletTopCandidates(
+  DoubletsForMiddleSp::InOrder createTripletTopCandidates(
       const SpacePointContainer& spacePoints, const ConstSpacePointProxy& spM,
       const DoubletsForMiddleSp::Proxy& bottomDoublet,
-      DoubletsForMiddleSp::Subset2 topDoublets,
+      DoubletsForMiddleSp::InOrder topDoublets,
       TripletTopCandidates& tripletTopCandidates) const override {
     if constexpr (useStripInfo) {
       return createStripTripletTopCandidates(spacePoints, spM, bottomDoublet,

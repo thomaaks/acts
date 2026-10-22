@@ -267,10 +267,10 @@ class TripletSeedFinder {
   /// @param tripletTopCandidates Cache for triplet top candidates
   /// @return The top doublets that can still be compatible with a subsequent
   ///   bottom doublet, see the note above
-  [[nodiscard]] virtual DoubletsForMiddleSp::Subset2 createTripletTopCandidates(
+  [[nodiscard]] virtual DoubletsForMiddleSp::InOrder createTripletTopCandidates(
       const SpacePointContainer& spacePoints, const ConstSpacePointProxy& spM,
       const DoubletsForMiddleSp::Proxy& bottomDoublet,
-      DoubletsForMiddleSp::Subset2 topDoublets,
+      DoubletsForMiddleSp::InOrder topDoublets,
       TripletTopCandidates& tripletTopCandidates) const = 0;
 };
 

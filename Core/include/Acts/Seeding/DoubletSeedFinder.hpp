@@ -14,7 +14,9 @@
 #include "Acts/Utilities/Delegate.hpp"
 #include "Acts/Utilities/detail/ContainerIterator.hpp"
 
+#include <cstddef>
 #include <cstdint>
+#include <iterator>
 #include <limits>
 #include <optional>
 #include <vector>
@@ -57,7 +59,7 @@ class DoubletsForMiddleSp {
   /// @param y Y coordinate
   void emplace_back(SpacePointIndex sp, float cotTheta, float iDeltaR, float er,
                     float u, float v, float x, float y) {
-    m_doublets.push_back({sp, cotTheta, iDeltaR, er, u, v, x, y});
+    m_doublets.emplace_back(sp, cotTheta, iDeltaR, er, u, v, x, y);
   }
 
   /// Pair of doublet index and cotTheta value.
@@ -96,10 +98,66 @@ class DoubletsForMiddleSp {
                       std::vector<IndexAndCotTheta>& indexAndCotTheta,
                       SortStorage& storage) const;
 
- private:
-  struct Doublet;
+  /// One doublet's parameters, stored as one record.
+  class Doublet {
+   public:
+    /// Constructor
+    /// @param spacePoint Space point index for the doublet
+    /// @param cotTheta Cotangent of theta
+    /// @param iDeltaR Inverse delta R
+    /// @param er Error term
+    /// @param u U coordinate
+    /// @param v V coordinate
+    /// @param x X coordinate
+    /// @param y Y coordinate
+    Doublet(SpacePointIndex spacePoint, float cotTheta, float iDeltaR,
+            float er, float u, float v, float x, float y)
+        : m_spacePoint(spacePoint),
+          m_cotTheta(cotTheta),
+          m_iDeltaR(iDeltaR),
+          m_er(er),
+          m_u(u),
+          m_v(v),
+          m_x(x),
+          m_y(y) {}
 
- public:
+    /// Get space point index
+    /// @return The space point index
+    SpacePointIndex spacePointIndex() const { return m_spacePoint; }
+    /// Get cotangent of theta
+    /// @return The cotTheta value
+    float cotTheta() const { return m_cotTheta; }
+    /// Get er value
+    /// @return The er value
+    float er() const { return m_er; }
+    /// Get inverse delta r
+    /// @return The inverse delta r value
+    float iDeltaR() const { return m_iDeltaR; }
+    /// Get u coordinate
+    /// @return The u value
+    float u() const { return m_u; }
+    /// Get v coordinate
+    /// @return The v value
+    float v() const { return m_v; }
+    /// Get x coordinate
+    /// @return The x value
+    float x() const { return m_x; }
+    /// Get y coordinate
+    /// @return The y value
+    float y() const { return m_y; }
+
+   private:
+    SpacePointIndex m_spacePoint{};
+    // parameters required to calculate a circle with linear equation
+    float m_cotTheta{};
+    float m_iDeltaR{};
+    float m_er{};
+    float m_u{};
+    float m_v{};
+    float m_x{};
+    float m_y{};
+  };
+
   /// Proxy accessor for a single doublet entry.
   class Proxy {
    public:
@@ -121,30 +179,30 @@ class DoubletsForMiddleSp {
     /// Get space point index pair
     /// @return The space point index
     SpacePointIndex spacePointIndex() const {
-      return m_doublet->spacePoint;
+      return m_doublet->spacePointIndex();
     }
 
     /// Get cotangent of theta
     /// @return The cotTheta value
-    float cotTheta() const { return m_doublet->cotTheta; }
+    float cotTheta() const { return m_doublet->cotTheta(); }
     /// Get er value
     /// @return The er value
-    float er() const { return m_doublet->er; }
+    float er() const { return m_doublet->er(); }
     /// Get inverse delta r
     /// @return The inverse delta r value
-    float iDeltaR() const { return m_doublet->iDeltaR; }
+    float iDeltaR() const { return m_doublet->iDeltaR(); }
     /// Get u coordinate
     /// @return The u value
-    float u() const { return m_doublet->u; }
+    float u() const { return m_doublet->u(); }
     /// Get v coordinate
     /// @return The v value
-    float v() const { return m_doublet->v; }
+    float v() const { return m_doublet->v(); }
     /// Get x coordinate
     /// @return The x value
-    float x() const { return m_doublet->x; }
+    float x() const { return m_doublet->x(); }
     /// Get y coordinate
     /// @return The y value
-    float y() const { return m_doublet->y; }
+    float y() const { return m_doublet->y(); }
 
    private:
     const DoubletsForMiddleSp* m_container{};
@@ -251,19 +309,88 @@ class DoubletsForMiddleSp {
     return Subset2(*this, subset);
   }
 
+  /// Doublets visited in the order of a sort, each read in place.
+  class InOrder {
+   public:
+    /// Iterator over the doublets in order
+    class const_iterator {
+     public:
+      /// Value type
+      using value_type = Doublet;
+      /// Difference type
+      using difference_type = std::ptrdiff_t;
+      /// Iterator concept
+      using iterator_concept = std::forward_iterator_tag;
+
+      const_iterator() = default;
+      /// @param doublets The doublet records
+      /// @param position Position in the order
+      const_iterator(const Doublet* doublets,
+                     const IndexAndCotTheta* position)
+          : m_doublets(doublets), m_position(position) {}
+
+      /// @return The doublet at this position
+      const Doublet& operator*() const {
+        return m_doublets[m_position->index];
+      }
+      /// @return This iterator, advanced
+      const_iterator& operator++() {
+        ++m_position;
+        return *this;
+      }
+      /// @return This iterator before it was advanced
+      const_iterator operator++(int) {
+        const_iterator previous = *this;
+        ++m_position;
+        return previous;
+      }
+      /// @return Whether both iterators are at the same position
+      bool operator==(const const_iterator&) const = default;
+
+     private:
+      const Doublet* m_doublets{};
+      const IndexAndCotTheta* m_position{};
+    };
+
+    /// @param doublets The doublets container
+    /// @param order Their indices, in the order to visit them
+    InOrder(const DoubletsForMiddleSp& doublets,
+            IndexAndCotThetaSubset order)
+        : m_doublets(doublets.m_doublets.data()), m_order(order) {}
+
+    /// @return The number of doublets visited
+    [[nodiscard]] std::size_t size() const { return m_order.size(); }
+    /// @return Whether no doublet is visited
+    [[nodiscard]] bool empty() const { return m_order.empty(); }
+    /// @return Iterator to the first doublet
+    const_iterator begin() const { return {m_doublets, m_order.data()}; }
+    /// @return Iterator past the last doublet
+    const_iterator end() const {
+      return {m_doublets, m_order.data() + m_order.size()};
+    }
+    /// @param offset Number of doublets to skip
+    /// @return The doublets from position offset on
+    InOrder subrange(std::size_t offset) const {
+      return InOrder(m_doublets, m_order.subspan(offset));
+    }
+
+   private:
+    InOrder(const Doublet* doublets, IndexAndCotThetaSubset order)
+        : m_doublets(doublets), m_order(order) {}
+
+    const Doublet* m_doublets{};
+    IndexAndCotThetaSubset m_order;
+  };
+
+  /// Create a view of the doublets in the order of a sort
+  /// @param order Index and cotTheta pairs, in the order to visit them
+  /// @return InOrder view reading each doublet in place
+  InOrder inOrder(const IndexAndCotThetaSubset& order) const noexcept {
+    return InOrder(*this, order);
+  }
+
  private:
   // one record a doublet, as the triplet finder reads all of a doublet at once
-  struct Doublet {
-    SpacePointIndex spacePoint{};
-    // parameters required to calculate a circle with linear equation
-    float cotTheta{};
-    float iDeltaR{};
-    float er{};
-    float u{};
-    float v{};
-    float x{};
-    float y{};
-  };
   std::vector<Doublet> m_doublets;
 };
 

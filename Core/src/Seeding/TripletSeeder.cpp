@@ -38,14 +38,14 @@ void advanceGroup(SpacePointGroup& group, Predicate isInRange) {
   group = group.subrange(offset);
 }
 
-template <typename DoubletCollections>
+template <typename BottomDoublets, typename TopDoublets>
 void createAndFilterTriplets(TripletSeeder::Cache& cache,
                              const TripletSeedFinder& tripletFinder,
                              const ITripletSeedFilter& filter,
                              const SpacePointContainer& spacePoints,
-                             DoubletCollections bottomDoublets,
+                             BottomDoublets bottomDoublets,
                              const ConstSpacePointProxy& spM,
-                             DoubletCollections topDoublets) {
+                             TopDoublets topDoublets) {
   for (auto bottomDoublet : bottomDoublets) {
     if (topDoublets.empty()) {
       break;
@@ -130,7 +130,7 @@ void createSeedsFromGroupsImpl(
     createAndFilterTriplets(cache, tripletFinder, filter, spacePoints,
                             cache.bottomDoublets.subset(cache.sortedBottoms),
                             middleSp,
-                            cache.topDoublets.subset(cache.sortedTops));
+                            cache.topDoublets.inOrder(cache.sortedTops));
   } else {
     createAndFilterTriplets(cache, tripletFinder, filter, spacePoints,
                             cache.bottomDoublets.range(), middleSp,

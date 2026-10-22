@@ -14,6 +14,7 @@
 #include "Acts/Utilities/Delegate.hpp"
 #include "Acts/Utilities/detail/ContainerIterator.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <optional>
@@ -36,21 +37,15 @@ class DoubletsForMiddleSp {
 
   /// Check if the doublets container is empty
   /// @return True if container has no doublets
-  [[nodiscard]] bool empty() const { return m_spacePoints.empty(); }
+  [[nodiscard]] bool empty() const { return m_doublets.empty(); }
   /// Get the number of doublets in container
   /// @return Number of doublets stored
   [[nodiscard]] Index size() const {
-    return static_cast<Index>(m_spacePoints.size());
+    return static_cast<Index>(m_doublets.size());
   }
 
   /// Clear all stored doublets and associated data
-  void clear() {
-    m_spacePoints.clear();
-    m_cotTheta.clear();
-    m_er_iDeltaR.clear();
-    m_uv.clear();
-    m_xy.clear();
-  }
+  void clear() { m_doublets.clear(); }
 
   /// Add a new doublet with associated parameters
   /// @param sp space point index for the doublet
@@ -63,21 +58,8 @@ class DoubletsForMiddleSp {
   /// @param y Y coordinate
   void emplace_back(SpacePointIndex sp, float cotTheta, float iDeltaR, float er,
                     float u, float v, float x, float y) {
-    m_spacePoints.push_back(sp);
-    m_cotTheta.push_back(cotTheta);
-    m_er_iDeltaR.push_back({er, iDeltaR});
-    m_uv.push_back({u, v});
-    m_xy.push_back({x, y});
+    m_doublets.emplace_back(sp, cotTheta, iDeltaR, er, u, v, x, y);
   }
-
-  /// Get reference to space point indices container
-  /// @return Const reference to space point indices vector
-  const std::vector<SpacePointIndex>& spacePoints() const {
-    return m_spacePoints;
-  }
-  /// Get reference to cotTheta values container
-  /// @return Const reference to cotTheta values vector
-  const std::vector<float>& cotTheta() const { return m_cotTheta; }
 
   /// Pair of doublet index and cotTheta value.
   struct IndexAndCotTheta {
@@ -118,80 +100,73 @@ class DoubletsForMiddleSp {
   /// Proxy accessor for a single doublet entry.
   class Proxy {
    public:
-    /// Constructor
-    /// @param container Pointer to the doublet container
-    /// @param index Index of the doublet
-    Proxy(const DoubletsForMiddleSp* container, Index index)
-        : m_container(container), m_index(index) {}
-
-    /// Get the doublet container
-    /// @return Reference to the container
-    const DoubletsForMiddleSp& container() const { return *m_container; }
-    /// Get the doublet index
-    /// @return The index
-    Index index() const { return m_index; }
+    /// Constructor from the doublet's parameters
+    /// @param sp Space point index for the doublet
+    /// @param cotTheta Cotangent of polar angle
+    /// @param iDeltaR Inverse delta R parameter
+    /// @param er Error in R coordinate
+    /// @param u U coordinate parameter
+    /// @param v V coordinate parameter
+    /// @param x X coordinate
+    /// @param y Y coordinate
+    Proxy(SpacePointIndex sp, float cotTheta, float iDeltaR, float er, float u,
+          float v, float x, float y)
+        : m_spacePoint(sp),
+          m_cotTheta(cotTheta),
+          m_iDeltaR(iDeltaR),
+          m_er(er),
+          m_u(u),
+          m_v(v),
+          m_x(x),
+          m_y(y) {}
 
     /// Get space point index pair
     /// @return The space point index
-    SpacePointIndex spacePointIndex() const {
-      return m_container->m_spacePoints[m_index];
-    }
+    SpacePointIndex spacePointIndex() const { return m_spacePoint; }
 
     /// Get cotangent of theta
     /// @return The cotTheta value
-    float cotTheta() const { return m_container->m_cotTheta[m_index]; }
+    float cotTheta() const { return m_cotTheta; }
     /// Get er value
     /// @return The er value
-    float er() const { return m_container->m_er_iDeltaR[m_index][0]; }
+    float er() const { return m_er; }
     /// Get inverse delta r
     /// @return The inverse delta r value
-    float iDeltaR() const { return m_container->m_er_iDeltaR[m_index][1]; }
+    float iDeltaR() const { return m_iDeltaR; }
     /// Get u coordinate
     /// @return The u value
-    float u() const { return m_container->m_uv[m_index][0]; }
+    float u() const { return m_u; }
     /// Get v coordinate
     /// @return The v value
-    float v() const { return m_container->m_uv[m_index][1]; }
+    float v() const { return m_v; }
     /// Get x coordinate
     /// @return The x value
-    float x() const { return m_container->m_xy[m_index][0]; }
+    float x() const { return m_x; }
     /// Get y coordinate
     /// @return The y value
-    float y() const { return m_container->m_xy[m_index][1]; }
+    float y() const { return m_y; }
 
    private:
-    const DoubletsForMiddleSp* m_container{};
-    Index m_index{};
-  };
-  /// Same as `Proxy` but also contains `cotTheta`. This is useful after sorting
-  /// doublets by `cotTheta` to avoid indirect access.
-  class Proxy2 : public Proxy {
-   public:
-    /// Constructor for Proxy2 with precomputed cotTheta
-    /// @param container Pointer to the doublets container
-    /// @param indexAndCotTheta Index and cotTheta pair
-    Proxy2(const DoubletsForMiddleSp* container,
-           IndexAndCotTheta indexAndCotTheta)
-        : Proxy(container, indexAndCotTheta.index),
-          m_cotTheta(indexAndCotTheta.cotTheta) {}
-
-    /// Get precomputed cotTheta value (avoids indirect access)
-    /// @return Cotangent of polar angle
-    float cotTheta() const { return m_cotTheta; }
-
-   private:
+    SpacePointIndex m_spacePoint{};
+    // parameters required to calculate a circle with linear equation
     float m_cotTheta{};
+    float m_iDeltaR{};
+    float m_er{};
+    float m_u{};
+    float m_v{};
+    float m_x{};
+    float m_y{};
   };
 
   /// Access doublet by index
   /// @param index Index of the doublet to access
   /// @return Proxy object for the doublet
-  Proxy operator[](Index index) const { return Proxy(this, index); }
+  const Proxy& operator[](Index index) const { return m_doublets[index]; }
   /// Access doublet by index and cotTheta pair
   /// @param indexAndCotTheta Index and cotTheta pair for the doublet
-  /// @return Proxy2 object for the doublet with precomputed cotTheta
-  Proxy2 operator[](IndexAndCotTheta indexAndCotTheta) const {
-    return Proxy2(this, indexAndCotTheta);
+  /// @return Proxy object for the doublet
+  const Proxy& operator[](IndexAndCotTheta indexAndCotTheta) const {
+    return m_doublets[indexAndCotTheta.index];
   }
 
   /// Type alias for const iterator over doublets in container
@@ -206,24 +181,26 @@ class DoubletsForMiddleSp {
   const_iterator end() const { return const_iterator(*this, size()); }
 
   /// Range view over doublets in the container.
-  class Range : public detail::ContainerRange<Range, Range, DoubletsForMiddleSp,
-                                              Index, true> {
+  class Range : public std::span<const Proxy> {
    public:
-    /// Base class type alias
-    using Base =
-        detail::ContainerRange<Range, Range, DoubletsForMiddleSp, Index, true>;
+    /// @param doublets The doublets in the range
+    explicit Range(std::span<const Proxy> doublets)
+        : std::span<const Proxy>(doublets) {}
 
-    using Base::Base;
+    /// @param offset Number of doublets to skip
+    /// @return The doublets from offset on
+    Range subrange(std::size_t offset) const { return Range(subspan(offset)); }
   };
 
   /// Get range view of all doublets
   /// @return Range object covering all doublets
-  Range range() const noexcept { return Range(*this, {0, size()}); }
+  Range range() const noexcept { return Range(m_doublets); }
   /// Get range view of doublets within specified index range
   /// @param range Index range to create view for
   /// @return Range object covering specified doublets
   Range range(const IndexRange& range) const noexcept {
-    return Range(*this, range);
+    return Range(std::span(m_doublets)
+                     .subspan(range.first, range.second - range.first));
   }
 
   /// Subset view of doublets addressed by indices.
@@ -238,16 +215,59 @@ class DoubletsForMiddleSp {
     using Base::Base;
   };
   /// Subset view of doublets addressed by index and cotTheta pairs.
-  class Subset2 : public detail::ContainerSubset<
-                      Subset2, Subset2, DoubletsForMiddleSp, Proxy2,
-                      std::span<const IndexAndCotTheta>, true> {
+  class Subset2 {
    public:
-    /// Base class type alias
-    using Base =
-        detail::ContainerSubset<Subset2, Subset2, DoubletsForMiddleSp, Proxy2,
-                                std::span<const IndexAndCotTheta>, true>;
+    /// Iterator over the doublets in the subset's order
+    class Iterator {
+     public:
+      /// @param container The doublets
+      /// @param it Position in the index and cotTheta pairs
+      Iterator(const DoubletsForMiddleSp* container,
+               const IndexAndCotTheta* it)
+          : m_container(container), m_it(it) {}
+      /// @return The doublet at this position
+      const Proxy& operator*() const {
+        return m_container->m_doublets[m_it->index];
+      }
+      /// @return This iterator, advanced by one
+      Iterator& operator++() {
+        ++m_it;
+        return *this;
+      }
+      /// @param other Iterator to compare with
+      /// @return Whether the two iterators differ
+      bool operator!=(const Iterator& other) const { return m_it != other.m_it; }
 
-    using Base::Base;
+     private:
+      const DoubletsForMiddleSp* m_container{};
+      const IndexAndCotTheta* m_it{};
+    };
+
+    /// @param container The doublets
+    /// @param subset Their index and cotTheta pairs, in the order to visit them
+    Subset2(const DoubletsForMiddleSp& container,
+            std::span<const IndexAndCotTheta> subset)
+        : m_container(&container), m_subset(subset) {}
+
+    /// @return The number of doublets in the subset
+    std::size_t size() const { return m_subset.size(); }
+    /// @return Whether the subset is empty
+    bool empty() const { return m_subset.empty(); }
+    /// @return Iterator to the first doublet
+    Iterator begin() const { return {m_container, m_subset.data()}; }
+    /// @return Iterator past the last doublet
+    Iterator end() const {
+      return {m_container, m_subset.data() + m_subset.size()};
+    }
+    /// @param offset Number of doublets to skip
+    /// @return The doublets from offset on
+    Subset2 subrange(std::size_t offset) const {
+      return {*m_container, m_subset.subspan(offset)};
+    }
+
+   private:
+    const DoubletsForMiddleSp* m_container{};
+    std::span<const IndexAndCotTheta> m_subset;
   };
 
   /// Create subset view from index subset
@@ -264,13 +284,7 @@ class DoubletsForMiddleSp {
   }
 
  private:
-  std::vector<SpacePointIndex> m_spacePoints;
-
-  // parameters required to calculate a circle with linear equation
-  std::vector<float> m_cotTheta;
-  std::vector<std::array<float, 2>> m_er_iDeltaR;
-  std::vector<std::array<float, 2>> m_uv;
-  std::vector<std::array<float, 2>> m_xy;
+  std::vector<Proxy> m_doublets;
 };
 
 /// Derived quantities for the middle space point in a doublet.

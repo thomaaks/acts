@@ -12,9 +12,8 @@
 #include "Acts/EventData/StripSpacePointCalibrationDetails.hpp"
 #include "Acts/SpacePointFormation/detail/StripSpacePointCalibrationImpl.hpp"
 #include "Acts/Utilities/MathHelpers.hpp"
-#include "Acts/Utilities/Zip.hpp"
 
-#include <ranges>
+#include <cstddef>
 
 #include <Eigen/Dense>
 #include <boost/mp11.hpp>
@@ -113,9 +112,11 @@ class Impl final : public TripletSeedFinder {
     const float scatteringInRegion2 = m_cfg.multipleScattering2 * iSinTheta2;
 
     std::size_t topDoubletOffset = 0;
-    for (auto [topDoublet, topDoubletIndex] :
-         zip(topDoublets, std::ranges::iota_view<std::size_t, std::size_t>(
-                              0, topDoublets.size()))) {
+    const auto firstTopDoublet = topDoublets.begin();
+    for (std::size_t topDoubletIndex = 0; topDoubletIndex < topDoublets.size();
+         ++topDoubletIndex) {
+      const auto topDoublet =
+          firstTopDoublet[static_cast<std::ptrdiff_t>(topDoubletIndex)];
       const SpacePointIndex spT = topDoublet.spacePointIndex();
       const float cotThetaT = topDoublet.cotTheta();
 
@@ -288,9 +289,11 @@ class Impl final : public TripletSeedFinder {
             spB.outerStripCalibrationDetails());
 
     std::size_t topDoubletOffset = 0;
-    for (auto [topDoublet, topDoubletIndex] :
-         zip(topDoublets, std::ranges::iota_view<std::size_t, std::size_t>(
-                              0, topDoublets.size()))) {
+    const auto firstTopDoublet = topDoublets.begin();
+    for (std::size_t topDoubletIndex = 0; topDoubletIndex < topDoublets.size();
+         ++topDoubletIndex) {
+      const auto topDoublet =
+          firstTopDoublet[static_cast<std::ptrdiff_t>(topDoubletIndex)];
       // Pre-filter on the doublet stage cot(theta) difference before the
       // expensive strip coordinate transformation. The doublet cot(theta)
       // values are computed from SP centers and are approximate, so the

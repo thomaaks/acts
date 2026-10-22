@@ -239,7 +239,7 @@ class TripletSeedFinder {
   ///   bottom doublet, see the note above
   [[nodiscard]] virtual DoubletsForMiddleSp::Range createTripletTopCandidates(
       const SpacePointContainer& spacePoints, const ConstSpacePointProxy& spM,
-      const DoubletsForMiddleSp::Proxy& bottomDoublet,
+      const DoubletForMiddleSp& bottomDoublet,
       DoubletsForMiddleSp::Range topDoublets,
       TripletTopCandidates& tripletTopCandidates) const = 0;
 
@@ -254,7 +254,7 @@ class TripletSeedFinder {
   ///   bottom doublet, see the note above
   [[nodiscard]] virtual DoubletsForMiddleSp::Subset createTripletTopCandidates(
       const SpacePointContainer& spacePoints, const ConstSpacePointProxy& spM,
-      const DoubletsForMiddleSp::Proxy& bottomDoublet,
+      const DoubletForMiddleSp& bottomDoublet,
       DoubletsForMiddleSp::Subset topDoublets,
       TripletTopCandidates& tripletTopCandidates) const = 0;
 
@@ -269,7 +269,7 @@ class TripletSeedFinder {
   ///   bottom doublet, see the note above
   [[nodiscard]] virtual DoubletsForMiddleSp::Subset2 createTripletTopCandidates(
       const SpacePointContainer& spacePoints, const ConstSpacePointProxy& spM,
-      const DoubletsForMiddleSp::Proxy& bottomDoublet,
+      const DoubletForMiddleSp& bottomDoublet,
       DoubletsForMiddleSp::Subset2 topDoublets,
       TripletTopCandidates& tripletTopCandidates) const = 0;
 };

@@ -66,7 +66,7 @@ class Impl final : public TripletSeedFinder {
   template <typename TopDoublets>
   TopDoublets createPixelTripletTopCandidates(
       const SpacePointContainer& spacePoints, const ConstSpacePointProxy& spM,
-      const DoubletsForMiddleSp::Proxy& bottomDoublet, TopDoublets topDoublets,
+      const DoubletForMiddleSp& bottomDoublet, TopDoublets topDoublets,
       TripletTopCandidates& tripletTopCandidates) const {
     const float rM = spM.zr()[1];
     const float varianceZM = spM.varianceZ();
@@ -214,7 +214,7 @@ class Impl final : public TripletSeedFinder {
 
     if constexpr (sortedByCotTheta) {
       // remove the top doublets that were skipped due to cotTheta sorting
-      topDoublets = topDoublets.subrange(topDoubletOffset);
+      topDoublets = topDoublets.subspan(topDoubletOffset);
     }
     return topDoublets;
   }
@@ -222,7 +222,7 @@ class Impl final : public TripletSeedFinder {
   template <typename TopDoublets>
   TopDoublets createStripTripletTopCandidates(
       const SpacePointContainer& spacePoints, const ConstSpacePointProxy& spM,
-      const DoubletsForMiddleSp::Proxy& bottomDoublet, TopDoublets topDoublets,
+      const DoubletForMiddleSp& bottomDoublet, TopDoublets topDoublets,
       TripletTopCandidates& tripletTopCandidates) const {
     const float rM = spM.zr()[1];
     const float cosPhiM = spM.xy()[0] / rM;
@@ -483,14 +483,14 @@ class Impl final : public TripletSeedFinder {
     if constexpr (sortedByCotTheta) {
       // remove the top doublets that can no longer be compatible with any
       // subsequent bottom doublet (which has a larger approximate cotTheta)
-      topDoublets = topDoublets.subrange(topDoubletOffset);
+      topDoublets = topDoublets.subspan(topDoubletOffset);
     }
     return topDoublets;
   }
 
   DoubletsForMiddleSp::Range createTripletTopCandidates(
       const SpacePointContainer& spacePoints, const ConstSpacePointProxy& spM,
-      const DoubletsForMiddleSp::Proxy& bottomDoublet,
+      const DoubletForMiddleSp& bottomDoublet,
       DoubletsForMiddleSp::Range topDoublets,
       TripletTopCandidates& tripletTopCandidates) const override {
     if constexpr (useStripInfo) {
@@ -504,7 +504,7 @@ class Impl final : public TripletSeedFinder {
 
   DoubletsForMiddleSp::Subset createTripletTopCandidates(
       const SpacePointContainer& spacePoints, const ConstSpacePointProxy& spM,
-      const DoubletsForMiddleSp::Proxy& bottomDoublet,
+      const DoubletForMiddleSp& bottomDoublet,
       DoubletsForMiddleSp::Subset topDoublets,
       TripletTopCandidates& tripletTopCandidates) const override {
     if constexpr (useStripInfo) {
@@ -518,7 +518,7 @@ class Impl final : public TripletSeedFinder {
 
   DoubletsForMiddleSp::Subset2 createTripletTopCandidates(
       const SpacePointContainer& spacePoints, const ConstSpacePointProxy& spM,
-      const DoubletsForMiddleSp::Proxy& bottomDoublet,
+      const DoubletForMiddleSp& bottomDoublet,
       DoubletsForMiddleSp::Subset2 topDoublets,
       TripletTopCandidates& tripletTopCandidates) const override {
     if constexpr (useStripInfo) {

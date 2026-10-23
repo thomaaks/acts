@@ -163,7 +163,7 @@ class Impl final : public DoubletSeedFinder {
     // the candidates go through in blocks: in each block the z-r cuts are made
     // for every candidate first, then the other cuts for those that passed
     constexpr std::size_t blockSize = 256;
-    std::array<std::uint32_t, blockSize> passesZRCuts{};
+    std::array<std::uint8_t, blockSize> passesZRCuts{};
     std::array<SpacePointIndex, blockSize> passedIndices{};
 
     for (std::size_t blockBegin = 0; blockBegin < nCandidates;

@@ -490,24 +490,6 @@ class Impl final : public TripletSeedFinder {
       std::span<const DoubletForMiddleSp> bottomDoublets,
       std::span<const DoubletForMiddleSp> topDoublets,
       std::vector<TripletTopCandidates>& tripletTopCandidates) const override {
-    createAllTripletTopCandidates(spacePoints, spM, bottomDoublets, topDoublets,
-                                  tripletTopCandidates);
-  }
-
-  void createTripletTopCandidates(
-      const SpacePointContainer& spacePoints, const ConstSpacePointProxy& spM,
-      Subspan bottomDoublets, Subspan topDoublets,
-      std::vector<TripletTopCandidates>& tripletTopCandidates) const override {
-    createAllTripletTopCandidates(spacePoints, spM, bottomDoublets, topDoublets,
-                                  tripletTopCandidates);
-  }
-
- private:
-  template <typename Doublets>
-  void createAllTripletTopCandidates(
-      const SpacePointContainer& spacePoints, const ConstSpacePointProxy& spM,
-      Doublets bottomDoublets, Doublets topDoublets,
-      std::vector<TripletTopCandidates>& tripletTopCandidates) const {
     if (tripletTopCandidates.size() < bottomDoublets.size()) {
       tripletTopCandidates.resize(bottomDoublets.size());
     }
@@ -530,6 +512,33 @@ class Impl final : public TripletSeedFinder {
     }
   }
 
+  void createTripletTopCandidates(
+      const SpacePointContainer& spacePoints, const ConstSpacePointProxy& spM,
+      Subspan bottomDoublets, Subspan topDoublets,
+      std::vector<TripletTopCandidates>& tripletTopCandidates) const override {
+    if (tripletTopCandidates.size() < bottomDoublets.size()) {
+      tripletTopCandidates.resize(bottomDoublets.size());
+    }
+
+    for (std::size_t i = 0; i < bottomDoublets.size(); ++i) {
+      tripletTopCandidates[i].clear();
+      if (topDoublets.empty()) {
+        continue;
+      }
+
+      if constexpr (useStripInfo) {
+        topDoublets = createStripTripletTopCandidates(
+            spacePoints, spM, bottomDoublets[i], topDoublets,
+            tripletTopCandidates[i]);
+      } else {
+        topDoublets = createPixelTripletTopCandidates(
+            spacePoints, spM, bottomDoublets[i], topDoublets,
+            tripletTopCandidates[i]);
+      }
+    }
+  }
+
+ private:
   DerivedConfig m_cfg;
 };
 

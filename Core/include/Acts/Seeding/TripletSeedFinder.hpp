@@ -222,43 +222,34 @@ class TripletSeedFinder {
   /// @return Reference to the configuration object
   virtual const DerivedConfig& config() const = 0;
 
-  /// Create triplets from the bottom, middle, and top space points.
-  ///
-  /// @note If the configuration declares the doublets sorted by cotTheta, the
-  ///   returned view is the input advanced past the top doublets that can no
-  ///   longer be compatible with any bottom doublet of a larger cotTheta. A
-  ///   caller sweeping the bottom doublets in ascending cotTheta has to feed
-  ///   the returned view to the next call, and start over from the full
-  ///   collection for the next middle space point.
+  /// Create the triplet top candidates of every bottom doublet of a middle
+  /// space point.
   ///
   /// @param spacePoints Space point container
   /// @param spM Space point candidate to be used as middle SP in a seed
-  /// @param bottomDoublet Bottom doublet to be used for triplet creation
+  /// @param bottomDoublets Bottom doublets to be used for triplet creation
   /// @param topDoublets Top doublets to be used for triplet creation
-  /// @param tripletTopCandidates Cache for triplet top candidates
-  /// @return The top doublets that can still be compatible with a subsequent
-  ///   bottom doublet, see the note above
-  [[nodiscard]] virtual std::span<const DoubletForMiddleSp>
-  createTripletTopCandidates(
+  /// @param tripletTopCandidates Output, the triplet top candidates of
+  ///   `bottomDoublets[i]` in `tripletTopCandidates[i]`
+  virtual void createTripletTopCandidates(
       const SpacePointContainer& spacePoints, const ConstSpacePointProxy& spM,
-      const DoubletForMiddleSp& bottomDoublet,
+      std::span<const DoubletForMiddleSp> bottomDoublets,
       std::span<const DoubletForMiddleSp> topDoublets,
-      TripletTopCandidates& tripletTopCandidates) const = 0;
+      std::vector<TripletTopCandidates>& tripletTopCandidates) const = 0;
 
-  /// Create triplets from the bottom, middle, and top space points, with the
-  /// top doublets in the order sortByCotTheta gives them.
+  /// Create the triplet top candidates of every bottom doublet of a middle
+  /// space point, with the doublets in the order sortByCotTheta gives them.
   ///
   /// @param spacePoints Space point container
   /// @param spM Space point candidate to be used as middle SP in a seed
-  /// @param bottomDoublet Bottom doublet to be used for triplet creation
+  /// @param bottomDoublets Bottom doublets to be used for triplet creation
   /// @param topDoublets Top doublets to be used for triplet creation
-  /// @param tripletTopCandidates Cache for triplet top candidates
-  /// @return The top doublets that can still be compatible with a subsequent
-  ///   bottom doublet, see the note above
-  [[nodiscard]] virtual Subspan createTripletTopCandidates(
+  /// @param tripletTopCandidates Output, the triplet top candidates of
+  ///   `bottomDoublets[i]` in `tripletTopCandidates[i]`
+  virtual void createTripletTopCandidates(
       const SpacePointContainer& spacePoints, const ConstSpacePointProxy& spM,
-      const DoubletForMiddleSp& bottomDoublet, Subspan topDoublets,
-      TripletTopCandidates& tripletTopCandidates) const = 0;
+      Subspan bottomDoublets, Subspan topDoublets,
+      std::vector<TripletTopCandidates>& tripletTopCandidates) const = 0;
 };
 
 }  // namespace Acts

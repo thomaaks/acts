@@ -38,8 +38,9 @@ class TripletSeeder {
     /// Storage for the sorts of the bottom and the top doublets
     SortStorage sortStorage;
 
-    /// Cache for triplet top candidates during seed formation
-    TripletTopCandidates tripletTopCandidates;
+    /// Cache for the triplet top candidates of each bottom doublet during seed
+    /// formation
+    std::vector<TripletTopCandidates> tripletTopCandidates;
 
     /// Cursors into the bottom space point groups, advanced as the middle
     /// space points are swept in ascending radius

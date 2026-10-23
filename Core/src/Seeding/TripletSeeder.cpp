@@ -49,19 +49,15 @@ void createAndFilterTriplets(TripletSeeder::Cache& cache,
                              DoubletCollections bottomDoublets,
                              const ConstSpacePointProxy& spM,
                              DoubletCollections topDoublets) {
+  tripletFinder.createTripletTopCandidates(spacePoints, spM, bottomDoublets,
+                                           topDoublets,
+                                           cache.tripletTopCandidates);
+
   for (std::size_t i = 0; i < bottomDoublets.size(); ++i) {
-    const DoubletForMiddleSp& bottomDoublet = bottomDoublets[i];
-    if (topDoublets.empty()) {
-      break;
+    if (cache.tripletTopCandidates[i].size() != 0) {
+      filter.filterTripletTopCandidates(spacePoints, spM, bottomDoublets[i],
+                                        cache.tripletTopCandidates[i]);
     }
-
-    cache.tripletTopCandidates.clear();
-    topDoublets = tripletFinder.createTripletTopCandidates(
-        spacePoints, spM, bottomDoublet, topDoublets,
-        cache.tripletTopCandidates);
-
-    filter.filterTripletTopCandidates(spacePoints, spM, bottomDoublet,
-                                      cache.tripletTopCandidates);
   }
 }
 

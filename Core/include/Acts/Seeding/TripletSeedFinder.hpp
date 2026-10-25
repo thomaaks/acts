@@ -118,6 +118,47 @@ class TripletTopCandidates {
   /// @return Const iterator pointing past the last triplet candidate
   const_iterator end() const { return const_iterator(*this, size()); }
 
+  /// View of a contiguous range of triplet candidates.
+  class Range {
+   public:
+    /// @param topSpacePoints Top space point indices of the candidates
+    /// @param curvatures Curvature estimations of the candidates
+    /// @param impactParameters Impact parameter estimations of the candidates
+    Range(std::span<const SpacePointIndex> topSpacePoints,
+          std::span<const float> curvatures,
+          std::span<const float> impactParameters)
+        : m_topSpacePoints(topSpacePoints),
+          m_curvatures(curvatures),
+          m_impactParameters(impactParameters) {}
+
+    /// @return Number of triplet candidates in the range
+    Index size() const { return static_cast<Index>(m_topSpacePoints.size()); }
+    /// @return Top space point indices of the candidates
+    std::span<const SpacePointIndex> topSpacePoints() const {
+      return m_topSpacePoints;
+    }
+    /// @return Curvature estimations of the candidates
+    std::span<const float> curvatures() const { return m_curvatures; }
+    /// @return Impact parameter estimations of the candidates
+    std::span<const float> impactParameters() const {
+      return m_impactParameters;
+    }
+
+   private:
+    std::span<const SpacePointIndex> m_topSpacePoints;
+    std::span<const float> m_curvatures;
+    std::span<const float> m_impactParameters;
+  };
+
+  /// @param begin Index of the first candidate of the range
+  /// @param end Index one past the last candidate of the range
+  /// @return View of the candidates from begin to end
+  Range range(Index begin, Index end) const {
+    return {std::span(m_topSpacePoints).subspan(begin, end - begin),
+            std::span(m_curvatures).subspan(begin, end - begin),
+            std::span(m_impactParameters).subspan(begin, end - begin)};
+  }
+
  private:
   std::vector<SpacePointIndex> m_topSpacePoints;
   std::vector<float> m_curvatures;
@@ -225,31 +266,24 @@ class TripletSeedFinder {
   /// Create the triplet top candidates of every bottom doublet of a middle
   /// space point.
   ///
-  /// @param spacePoints Space point container
-  /// @param spM Space point candidate to be used as middle SP in a seed
-  /// @param bottomDoublets Bottom doublets to be used for triplet creation
-  /// @param topDoublets Top doublets to be used for triplet creation
-  /// @param tripletTopCandidates Output, the triplet top candidates of
-  ///   `bottomDoublets[i]` in `tripletTopCandidates[i]`
-  virtual void createTripletTopCandidates(
-      const SpacePointContainer& spacePoints, const ConstSpacePointProxy& spM,
-      std::span<const DoubletForMiddleSp> bottomDoublets,
-      std::span<const DoubletForMiddleSp> topDoublets,
-      std::vector<TripletTopCandidates>& tripletTopCandidates) const = 0;
-
-  /// Create the triplet top candidates of every bottom doublet of a middle
-  /// space point, with the doublets in the order sortByCotTheta gives them.
+  /// @note If the configuration declares the doublets sorted by cotTheta, the
+  ///   bottom and the top doublets have to be in the order sortByCotTheta
+  ///   gives them.
   ///
   /// @param spacePoints Space point container
   /// @param spM Space point candidate to be used as middle SP in a seed
   /// @param bottomDoublets Bottom doublets to be used for triplet creation
   /// @param topDoublets Top doublets to be used for triplet creation
-  /// @param tripletTopCandidates Output, the triplet top candidates of
-  ///   `bottomDoublets[i]` in `tripletTopCandidates[i]`
+  /// @param tripletTopCandidates Output, the triplet top candidates of all
+  ///   bottom doublets
+  /// @param bottomOffsets Output, the candidates of `bottomDoublets[i]` are
+  ///   the ones from `bottomOffsets[i]` to `bottomOffsets[i + 1]`
   virtual void createTripletTopCandidates(
       const SpacePointContainer& spacePoints, const ConstSpacePointProxy& spM,
-      Subspan bottomDoublets, Subspan topDoublets,
-      std::vector<TripletTopCandidates>& tripletTopCandidates) const = 0;
+      std::span<const DoubletForMiddleSp> bottomDoublets,
+      std::span<const DoubletForMiddleSp> topDoublets,
+      TripletTopCandidates& tripletTopCandidates,
+      std::vector<TripletTopCandidates::Index>& bottomOffsets) const = 0;
 };
 
 }  // namespace Acts

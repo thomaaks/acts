@@ -79,37 +79,6 @@ void sortByCotTheta(const DoubletsForMiddleSp& doublets,
                     std::vector<IndexAndCotTheta>& indexAndCotTheta,
                     SortStorage& storage);
 
-/// The doublets of a middle space point in the order of a list of their
-/// indices, as sortByCotTheta gives it.
-class Subspan {
- public:
-  /// @param doublets The doublets
-  /// @param indexAndCotTheta Their index and cotTheta pairs, in the order to
-  ///   visit them
-  Subspan(const DoubletsForMiddleSp& doublets,
-          std::span<const IndexAndCotTheta> indexAndCotTheta)
-      : m_doublets(&doublets), m_indexAndCotTheta(indexAndCotTheta) {}
-
-  /// @return The number of doublets visited
-  [[nodiscard]] std::size_t size() const { return m_indexAndCotTheta.size(); }
-  /// @return Whether no doublet is visited
-  [[nodiscard]] bool empty() const { return m_indexAndCotTheta.empty(); }
-  /// @param i Position in the subspan
-  /// @return The doublet at that position
-  const DoubletForMiddleSp& operator[](std::size_t i) const {
-    return (*m_doublets)[m_indexAndCotTheta[i].index];
-  }
-  /// @param offset Number of doublets to skip
-  /// @return The doublets from position offset on
-  Subspan subspan(std::size_t offset) const {
-    return {*m_doublets, m_indexAndCotTheta.subspan(offset)};
-  }
-
- private:
-  const DoubletsForMiddleSp* m_doublets{};
-  std::span<const IndexAndCotTheta> m_indexAndCotTheta;
-};
-
 /// Derived quantities for the middle space point in a doublet.
 struct MiddleSpInfo {
   /// minus one over radius of middle SP

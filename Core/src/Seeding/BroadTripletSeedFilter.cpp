@@ -106,7 +106,7 @@ bool BroadTripletSeedFilter::sufficientTopDoublets(
 void BroadTripletSeedFilter::filterTripletTopCandidates(
     const SpacePointContainer& spacePoints, const ConstSpacePointProxy& spM,
     const DoubletForMiddleSp& bottomLink,
-    const TripletTopCandidates& tripletTopCandidates) const {
+    TripletTopCandidates::Range tripletTopCandidates) const {
   auto spB = spacePoints[bottomLink.spacePointIndex];
   auto bottomSp = spB.index();
   auto middleSp = spM.index();

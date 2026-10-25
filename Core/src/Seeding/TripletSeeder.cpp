@@ -41,22 +41,37 @@ void advanceGroup(SpacePointGroup& group, Predicate isInRange) {
   group = group.subrange(offset);
 }
 
-template <typename DoubletCollections>
+/// Copy the doublets into the order sortByCotTheta gives them.
+void copySorted(const DoubletsForMiddleSp& doublets,
+                std::span<const IndexAndCotTheta> sorted,
+                DoubletsForMiddleSp& sortedDoublets) {
+  sortedDoublets.clear();
+  sortedDoublets.reserve(sorted.size());
+  for (const IndexAndCotTheta& item : sorted) {
+    sortedDoublets.push_back(doublets[item.index]);
+  }
+}
+
 void createAndFilterTriplets(TripletSeeder::Cache& cache,
                              const TripletSeedFinder& tripletFinder,
                              const ITripletSeedFilter& filter,
                              const SpacePointContainer& spacePoints,
-                             DoubletCollections bottomDoublets,
+                             std::span<const DoubletForMiddleSp> bottomDoublets,
                              const ConstSpacePointProxy& spM,
-                             DoubletCollections topDoublets) {
-  tripletFinder.createTripletTopCandidates(spacePoints, spM, bottomDoublets,
-                                           topDoublets,
-                                           cache.tripletTopCandidates);
+                             std::span<const DoubletForMiddleSp> topDoublets) {
+  tripletFinder.createTripletTopCandidates(
+      spacePoints, spM, bottomDoublets, topDoublets, cache.tripletTopCandidates,
+      cache.tripletTopCandidateOffsets);
 
   for (std::size_t i = 0; i < bottomDoublets.size(); ++i) {
-    if (cache.tripletTopCandidates[i].size() != 0) {
-      filter.filterTripletTopCandidates(spacePoints, spM, bottomDoublets[i],
-                                        cache.tripletTopCandidates[i]);
+    const TripletTopCandidates::Index begin =
+        cache.tripletTopCandidateOffsets[i];
+    const TripletTopCandidates::Index end =
+        cache.tripletTopCandidateOffsets[i + 1];
+    if (begin != end) {
+      filter.filterTripletTopCandidates(
+          spacePoints, spM, bottomDoublets[i],
+          cache.tripletTopCandidates.range(begin, end));
     }
   }
 }
@@ -125,16 +140,16 @@ void createSeedsFromGroupsImpl(
     sortByCotTheta(cache.bottomDoublets, cache.sortedBottoms,
                    cache.sortStorage);
     sortByCotTheta(cache.topDoublets, cache.sortedTops, cache.sortStorage);
+    copySorted(cache.bottomDoublets, cache.sortedBottoms,
+               cache.sortedBottomDoublets);
+    copySorted(cache.topDoublets, cache.sortedTops, cache.sortedTopDoublets);
 
     createAndFilterTriplets(cache, tripletFinder, filter, spacePoints,
-                            Subspan(cache.bottomDoublets, cache.sortedBottoms),
-                            middleSp,
-                            Subspan(cache.topDoublets, cache.sortedTops));
+                            cache.sortedBottomDoublets, middleSp,
+                            cache.sortedTopDoublets);
   } else {
-    createAndFilterTriplets(
-        cache, tripletFinder, filter, spacePoints,
-        std::span<const DoubletForMiddleSp>(cache.bottomDoublets), middleSp,
-        std::span<const DoubletForMiddleSp>(cache.topDoublets));
+    createAndFilterTriplets(cache, tripletFinder, filter, spacePoints,
+                            cache.bottomDoublets, middleSp, cache.topDoublets);
   }
 
   filter.filterTripletsMiddleFixed(spacePoints, outputSeeds);

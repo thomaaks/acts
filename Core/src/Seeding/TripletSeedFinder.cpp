@@ -88,10 +88,6 @@ class Impl final : public TripletSeedFinder {
       varianceTB = spB.varianceT();
     }
 
-    // Reserve enough space, in case current capacity is too little
-    tripletTopCandidates.reserve(tripletTopCandidates.size() +
-                                 topDoublets.size());
-
     const float cotThetaB = bottomDoublet.cotTheta();
     const float erB = bottomDoublet.er();
     const float iDeltaRB = bottomDoublet.iDeltaR();
@@ -229,10 +225,6 @@ class Impl final : public TripletSeedFinder {
     const float sinPhiM = spM.xy()[1] / rM;
     const float varianceZM = spM.varianceZ();
     const float varianceRM = spM.varianceR();
-
-    // Reserve enough space, in case current capacity is too little
-    tripletTopCandidates.reserve(tripletTopCandidates.size() +
-                                 topDoublets.size());
 
     const float cotThetaB0 = bottomDoublet.cotTheta();
     const float erB = bottomDoublet.er();
@@ -488,46 +480,51 @@ class Impl final : public TripletSeedFinder {
     return topDoublets;
   }
 
-  DoubletsForMiddleSp::Range createTripletTopCandidates(
+  template <typename Doublets>
+  void createAllTripletTopCandidates(
       const SpacePointContainer& spacePoints, const ConstSpacePointProxy& spM,
-      const DoubletsForMiddleSp::Proxy& bottomDoublet,
+      Doublets bottomDoublets, Doublets topDoublets,
+      TripletTopCandidates& tripletTopCandidates,
+      std::vector<TripletTopCandidates::Index>& bottomOffsets) const {
+    tripletTopCandidates.clear();
+    bottomOffsets.clear();
+    bottomOffsets.reserve(bottomDoublets.size() + 1);
+    bottomOffsets.push_back(0);
+
+    for (auto bottomDoublet : bottomDoublets) {
+      if (!topDoublets.empty()) {
+        if constexpr (useStripInfo) {
+          topDoublets = createStripTripletTopCandidates(
+              spacePoints, spM, bottomDoublet, topDoublets,
+              tripletTopCandidates);
+        } else {
+          topDoublets = createPixelTripletTopCandidates(
+              spacePoints, spM, bottomDoublet, topDoublets,
+              tripletTopCandidates);
+        }
+      }
+      bottomOffsets.push_back(tripletTopCandidates.size());
+    }
+  }
+
+  void createTripletTopCandidates(
+      const SpacePointContainer& spacePoints, const ConstSpacePointProxy& spM,
+      DoubletsForMiddleSp::Range bottomDoublets,
       DoubletsForMiddleSp::Range topDoublets,
-      TripletTopCandidates& tripletTopCandidates) const override {
-    if constexpr (useStripInfo) {
-      return createStripTripletTopCandidates(spacePoints, spM, bottomDoublet,
-                                             topDoublets, tripletTopCandidates);
-    } else {
-      return createPixelTripletTopCandidates(spacePoints, spM, bottomDoublet,
-                                             topDoublets, tripletTopCandidates);
-    }
+      TripletTopCandidates& tripletTopCandidates,
+      std::vector<TripletTopCandidates::Index>& bottomOffsets) const override {
+    createAllTripletTopCandidates(spacePoints, spM, bottomDoublets, topDoublets,
+                                  tripletTopCandidates, bottomOffsets);
   }
 
-  DoubletsForMiddleSp::Subset createTripletTopCandidates(
+  void createTripletTopCandidates(
       const SpacePointContainer& spacePoints, const ConstSpacePointProxy& spM,
-      const DoubletsForMiddleSp::Proxy& bottomDoublet,
-      DoubletsForMiddleSp::Subset topDoublets,
-      TripletTopCandidates& tripletTopCandidates) const override {
-    if constexpr (useStripInfo) {
-      return createStripTripletTopCandidates(spacePoints, spM, bottomDoublet,
-                                             topDoublets, tripletTopCandidates);
-    } else {
-      return createPixelTripletTopCandidates(spacePoints, spM, bottomDoublet,
-                                             topDoublets, tripletTopCandidates);
-    }
-  }
-
-  DoubletsForMiddleSp::Subset2 createTripletTopCandidates(
-      const SpacePointContainer& spacePoints, const ConstSpacePointProxy& spM,
-      const DoubletsForMiddleSp::Proxy& bottomDoublet,
+      DoubletsForMiddleSp::Subset2 bottomDoublets,
       DoubletsForMiddleSp::Subset2 topDoublets,
-      TripletTopCandidates& tripletTopCandidates) const override {
-    if constexpr (useStripInfo) {
-      return createStripTripletTopCandidates(spacePoints, spM, bottomDoublet,
-                                             topDoublets, tripletTopCandidates);
-    } else {
-      return createPixelTripletTopCandidates(spacePoints, spM, bottomDoublet,
-                                             topDoublets, tripletTopCandidates);
-    }
+      TripletTopCandidates& tripletTopCandidates,
+      std::vector<TripletTopCandidates::Index>& bottomOffsets) const override {
+    createAllTripletTopCandidates(spacePoints, spM, bottomDoublets, topDoublets,
+                                  tripletTopCandidates, bottomOffsets);
   }
 
  private:

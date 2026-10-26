@@ -16,7 +16,11 @@
 #include <cmath>
 #include <limits>
 #include <numbers>
+#include <ranges>
+#include <span>
 #include <utility>
+
+#include "detail/SortByKey.hpp"
 
 namespace Acts::Experimental {
 
@@ -93,32 +97,27 @@ void GbtsNodeStorage::extend(
 
 std::vector<std::uint32_t> GbtsNodeStorage::sortBinByPhi(
     const std::vector<std::uint32_t>& staged) const {
-  const std::uint32_t nBuckets = m_cfg.phiSortBuckets;
-  std::array<std::vector<std::pair<float, std::uint32_t>>,
-             kMaxPhiSortBuckets + 1>
-      phiBuckets;
+  using Item = std::pair<std::uint32_t, float>;
+  struct SortStorage {
+    std::vector<Item> scratch;
+    std::vector<std::uint32_t> buckets;
+  };
 
+  std::vector<Item> items;
+  items.reserve(staged.size());
   for (const std::uint32_t stagedIdx : staged) {
-    const float phi = m_staged[stagedIdx].phi;
-    const auto bIdx = static_cast<std::uint32_t>(
-        0.5 * nBuckets * (phi / std::numbers::pi_v<float> + 1.0f));
-    phiBuckets[bIdx].emplace_back(phi, stagedIdx);
+    items.emplace_back(stagedIdx, m_staged[stagedIdx].phi);
   }
 
-  // Nodes with identical phi are ordered by insertion index.
-  for (std::uint32_t bucket = 0; bucket <= nBuckets; ++bucket) {
-    std::ranges::sort(phiBuckets[bucket]);
-  }
+  // The staged indices are in insertion order and the sort is stable, so
+  // nodes with identical phi stay ordered by insertion index.
+  constexpr std::size_t kQuadraticLinearCrossover = 32;
+  SortStorage storage;
+  Acts::detail::sortByKey<kQuadraticLinearCrossover>(
+      std::span(items), storage, [](const Item& item) { return item.second; });
 
-  std::vector<std::uint32_t> sorted;
-  sorted.reserve(staged.size());
-  for (std::uint32_t bucket = 0; bucket <= nBuckets; ++bucket) {
-    for (const auto& [phi, stagedIdx] : phiBuckets[bucket]) {
-      sorted.push_back(stagedIdx);
-    }
-  }
-
-  return sorted;
+  const auto order = items | std::views::keys;
+  return {order.begin(), order.end()};
 }
 
 void GbtsNodeStorage::finalize() {

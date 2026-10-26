@@ -12,6 +12,9 @@
 #include "Acts/Seeding/DoubletSeedFinder.hpp"
 #include "Acts/Seeding/TripletSeedFinder.hpp"
 
+#include <cstddef>
+#include <span>
+
 #include <Eigen/Dense>
 
 namespace Acts {
@@ -46,7 +49,8 @@ void createAndFilterTriplets(TripletSeeder::Cache& cache,
                              DoubletCollections bottomDoublets,
                              const ConstSpacePointProxy& spM,
                              DoubletCollections topDoublets) {
-  for (auto bottomDoublet : bottomDoublets) {
+  for (std::size_t i = 0; i < bottomDoublets.size(); ++i) {
+    const DoubletsForMiddleSp::Doublet& bottomDoublet = bottomDoublets[i];
     if (topDoublets.empty()) {
       break;
     }
@@ -128,13 +132,13 @@ void createSeedsFromGroupsImpl(
                                      cache.sortedTops, cache.sortStorage);
 
     createAndFilterTriplets(cache, tripletFinder, filter, spacePoints,
-                            cache.bottomDoublets.subset(cache.sortedBottoms),
+                            cache.bottomDoublets.subspan(cache.sortedBottoms),
                             middleSp,
-                            cache.topDoublets.subset(cache.sortedTops));
+                            cache.topDoublets.subspan(cache.sortedTops));
   } else {
     createAndFilterTriplets(cache, tripletFinder, filter, spacePoints,
-                            cache.bottomDoublets.range(), middleSp,
-                            cache.topDoublets.range());
+                            cache.bottomDoublets.doublets(), middleSp,
+                            cache.topDoublets.doublets());
   }
 
   filter.filterTripletsMiddleFixed(spacePoints, outputSeeds);

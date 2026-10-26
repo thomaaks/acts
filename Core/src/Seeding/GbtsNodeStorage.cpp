@@ -98,7 +98,7 @@ void GbtsNodeStorage::extend(
 std::vector<std::uint32_t> GbtsNodeStorage::sortBinByPhi(
     const std::vector<std::uint32_t>& staged) const {
   using Item = std::pair<std::uint32_t, float>;
-  struct SortStorage {
+  struct PhiSortBuckets {
     std::vector<Item> scratch;
     std::vector<std::uint32_t> buckets;
   };
@@ -112,9 +112,10 @@ std::vector<std::uint32_t> GbtsNodeStorage::sortBinByPhi(
   // The staged indices are in insertion order and the sort is stable, so
   // nodes with identical phi stay ordered by insertion index.
   constexpr std::size_t kQuadraticLinearCrossover = 32;
-  SortStorage storage;
+  PhiSortBuckets phiBuckets;
   Acts::detail::sortByKey<kQuadraticLinearCrossover>(
-      std::span(items), storage, [](const Item& item) { return item.second; });
+      std::span(items), phiBuckets,
+      [](const Item& item) { return item.second; });
 
   const auto order = items | std::views::keys;
   return {order.begin(), order.end()};

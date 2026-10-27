@@ -141,18 +141,17 @@ bool validateTriplet(const GbtsGraphBuilder::Config& cfg,
 /// Computed without a branch, so that the caller can fold it into one branch
 /// with its other doublet cuts.
 /// @param cfg Graph builder configuration
-/// @param z0BitMask Sets allowed bins of allowed z value; never empty, as the
-///                  caller skips isolated nodes
+/// @param z0BitMask Bins of the z0 histogram that the node's edges filled; an
+///                  isolated node's is empty and fails
 /// @param z0 Estimated z0 of segments z value at beamspot
 /// @param z0HistoCoeff Scale factor that converts z coordinate into bin index
-/// @return Whether segment is within beamspot range
+/// @return Whether z0's bin or a neighbour within z0Resolution is filled
 bool checkZ0BitMask(const GbtsGraphBuilder::Config& cfg,
                     const std::uint16_t z0BitMask, const float z0,
                     const float z0HistoCoeff) {
-  // z0 is not range checked before this (doubletFilterRZ is optional and
-  // evaluated beside it), so a bin outside the histogram is reachable: it
-  // counts as unset. The shift is clamped so it stays in range; the range
-  // test decides.
+  // z0 is not range checked before this, so a bin outside the histogram is
+  // reachable and counts as unset. The shift is clamped only to stay
+  // defined.
   const auto isSet = [z0BitMask](const std::int32_t bin) {
     const std::int32_t shift =
         std::clamp<std::int32_t>(bin, 0, detail::kGbtsZ0HistogramBins - 1);
@@ -225,6 +224,13 @@ GbtsGraph GbtsGraphBuilder::buildTheGraph(const GbtsRoiDescriptor& roi,
   const std::span<detail::GbtsNodeEdgeInfo> edgeInfo =
       nodeStorage.nodeEdgeInfo();
 
+  // the window positions of the n2 nodes that pass the doublet cuts, and
+  // their tau and curvature as the cuts made them (unused for strip pairs,
+  // which compute their own)
+  std::vector<std::uint32_t> keptPhiIdx;
+  std::vector<float> keptTau;
+  std::vector<float> keptCurv;
+
   // reused across bin groups so that the windows are allocated once
   std::vector<SlidingWindow> phiSlidingWindow;
 
@@ -278,6 +284,12 @@ GbtsGraph GbtsGraphBuilder::buildTheGraph(const GbtsRoiDescriptor& roi,
 
       if (B2.empty()) {
         continue;
+      }
+
+      if (keptPhiIdx.size() < B2.phiNodes.size()) {
+        keptPhiIdx.resize(B2.phiNodes.size());
+        keptTau.resize(B2.phiNodes.size());
+        keptCurv.resize(B2.phiNodes.size());
       }
 
       const float rb2 = B2.maxRadius;
@@ -355,7 +367,11 @@ GbtsGraph GbtsGraphBuilder::buildTheGraph(const GbtsRoiDescriptor& roi,
         const float minPhi = phi1 - deltaPhi;
         const float maxPhi = phi1 + deltaPhi;
 
-        // the inner loop over n2 nodes using sliding window
+        // Which doublet cut a pair fails is data the branch predictor cannot
+        // learn, so the window is first scanned without branches and the
+        // positions that pass every cut are kept in order. Strip pairs are kept
+        // unconditionally: they are cut below on their calibrated ends.
+        std::uint32_t numKept = 0;
         for (std::uint32_t n2PhiIdx = slw.firstIt; n2PhiIdx < slw.numPhiNodes;
              ++n2PhiIdx) {
           const float phi2 = slw.phiNodes[n2PhiIdx].first;
@@ -371,50 +387,92 @@ GbtsGraph GbtsGraphBuilder::buildTheGraph(const GbtsRoiDescriptor& roi,
           }
 
           const SpacePointIndex n2Idx = slw.phiNodes[n2PhiIdx].second;
+          const detail::GbtsNodeParams& n2pars = params[n2Idx];
+          const float dr = n2pars.r - r1;
+          // The radius cut stays a branch, as it is predictable. On the
+          // nominal radii, so an endcap strip pair that calibration would have
+          // moved past minDeltaRadius is lost here; the cheap reject is worth
+          // more.
+          if (dr < m_cfg.minDeltaRadius) {
+            continue;
+          }
+          const std::uint16_t nodeInfo = edgeInfo[n2Idx].isConnected;
+          const float tau = (n2pars.z - z1) / dr;
+          const float ftau = std::fabs(tau);
+          const float z0 = z1 - r1 * tau;
+          const float zOuter = z0 + m_cfg.maxOuterRadius * tau;
+          const float curv = (phi2 - phi1) / dr;
+          const float curvCut = ftau < m_cfg.curvatureSplitAbsTau
+                                    ? curvatureCutLowEta
+                                    : curvatureCutHighEta;
+          // an isolated n2's empty mask fails, as its edges lead to nowhere
+          const bool inZ0Histogram =
+              !useZ0Histogram ||
+              checkZ0BitMask(m_cfg, nodeInfo, z0, z0HistoCoeff);
+          const bool inRZ = !m_cfg.doubletFilterRZ ||
+                            ((z0 >= m_cfg.minZ0) & (z0 <= m_cfg.maxZ0) &
+                             (zOuter >= cutZMinU) & (zOuter <= cutZMaxU));
+          const bool inTau = (ftau >= std::max(n1pars.minTau, n2pars.minTau)) &
+                             (ftau <= std::min(maxTau1, n2pars.maxTau));
+          // written for every pair, kept by advancing numKept
+          keptPhiIdx[numKept] = n2PhiIdx;
+          keptTau[numKept] = tau;
+          keptCurv[numKept] = curv;
+          numKept += static_cast<std::uint32_t>(
+              stripPair |
+              (inTau & inZ0Histogram & inRZ & (std::abs(curv) <= curvCut)));
+        }
+
+        // the inner loop over the n2 nodes kept
+        for (std::uint32_t i = 0; i < numKept; ++i) {
+          const std::uint32_t n2PhiIdx = keptPhiIdx[i];
+          const float phi2 = slw.phiNodes[n2PhiIdx].first;
+
+          const SpacePointIndex n2Idx = slw.phiNodes[n2PhiIdx].second;
 
           const detail::GbtsNodeEdgeInfo& n2Info = edgeInfo[n2Idx];
 
           const std::uint16_t nodeInfo = n2Info.isConnected;
 
-          // skip isolated nodes as their incoming edges lead to nowhere
-          if (useZ0Histogram && (nodeInfo == 0)) {
-            continue;
-          }
-
           const std::uint32_t n2FirstEdge = n2Info.firstEdge;
           const std::uint16_t n2NumEdges = n2Info.numEdges;
           const std::uint32_t n2LastEdge = n2FirstEdge + n2NumEdges;
 
-          const detail::GbtsNodeParams& n2pars = params[n2Idx];
-
-          const float r2 = n2pars.r;
-
-          float dr = r2 - r1;
-
-          // On the nominal radii, so an endcap pair the slide would have
-          // opened up is lost here. The cheap reject is worth more.
-          if (dr < m_cfg.minDeltaRadius) {
-            continue;
-          }
-
-          const float z2 = n2pars.z;
-
           // the ends as the pair puts them: nominal, or slid along the strip
-          // when resolved. Azimuth is kept as it was -- exactly right in the
-          // barrel, and to the stereo angle in the endcap, where the strip
-          // slid along is a hair off radial.
+          // when resolved
           float r1c = r1;
           float z1c = z1;
-          float r2c = r2;
-          float z2c = z2;
+          float r2c = 0.f;
+          float tau = 0.f;
+          float curv = 0.f;
 
-          if (stripPair) {
+          if (!stripPair) {
+            // The scan above made tau and the curvature from the same nominal
+            // ends, and the pair passed every cut with them.
+            r2c = params[n2Idx].r;
+            tau = keptTau[i];
+            curv = keptCurv[i];
+          } else {
+            // skip isolated nodes, as their incoming edges lead to nowhere (the
+            // scan above dropped them for pixel pairs)
+            if (useZ0Histogram && (nodeInfo == 0)) {
+              continue;
+            }
+
+            const detail::GbtsNodeParams& n2pars = params[n2Idx];
+
+            // Azimuth is kept as it was -- exactly right in the barrel, and to
+            // the stereo angle in the endcap, where the strip slid along is a
+            // hair off radial.
+            r2c = n2pars.r;
+            float z2c = n2pars.z;
+
             // A circle's chord bisects the tangent directions, so turning the
             // chord by the pair's own azimuth difference gives each tangent.
             const std::array<float, 4>& position = nodeView.positions[n2Idx];
             const float dx = position[0] - x1;
             const float dy = position[1] - y1;
-            const float dzc = z2 - z1;
+            const float dzc = n2pars.z - z1;
             const float turn = phi2 - phi1;
 
             bool resolved = true;
@@ -430,54 +488,61 @@ GbtsGraph GbtsGraphBuilder::buildTheGraph(const GbtsRoiDescriptor& roi,
               continue;
             }
 
-            dr = r2c - r1c;
+            const float dr = r2c - r1c;
             if (dr < m_cfg.minDeltaRadius) {
+              continue;
+            }
+
+            tau = (z2c - z1c) / dr;
+            const float ftau = std::fabs(tau);
+            if (ftau > m_cfg.maxAbsTau) {
+              continue;
+            }
+
+            if (ftau < n1pars.minTau) {
+              continue;
+            }
+            if (ftau > n1pars.maxTau) {
+              continue;
+            }
+
+            if (ftau < n2pars.minTau) {
+              continue;
+            }
+            if (ftau > n2pars.maxTau) {
+              continue;
+            }
+
+            const float z0s = z1c - r1c * tau;
+
+            // check against a non-empty z0 histogram
+            if (useZ0Histogram &&
+                !checkZ0BitMask(m_cfg, nodeInfo, z0s, z0HistoCoeff)) {
+              continue;
+            }
+
+            if (m_cfg.doubletFilterRZ) {
+              if (z0s < m_cfg.minZ0 || z0s > m_cfg.maxZ0) {
+                continue;
+              }
+
+              const float zOuter = z0s + m_cfg.maxOuterRadius * tau;
+
+              if (zOuter < cutZMinU || zOuter > cutZMaxU) {
+                continue;
+              }
+            }
+
+            curv = (phi2 - phi1) / dr;
+
+            if (std::abs(curv) > (ftau < m_cfg.curvatureSplitAbsTau
+                                      ? curvatureCutLowEta
+                                      : curvatureCutHighEta)) {
               continue;
             }
           }
 
-          const float dz = z2c - z1c;
-          const float tau = dz / dr;
-          const float ftau = std::fabs(tau);
-          // The doublet cuts as two branches rather than one each: which cut
-          // a pair fails depends on the data, so separate branches
-          // mispredict. Equivalent to the separate cuts for finite values
-          // (dr >= minDeltaRadius > 0 by default). First maxAbsTau and both
-          // nodes' tau windows, which also bound z0 for the casts below,
-          const float minTau = std::max(n1pars.minTau, n2pars.minTau);
-          const float maxTau = std::min(maxTau1, n2pars.maxTau);
-          const bool inTauWindow = (static_cast<int>(ftau >= minTau) &
-                                    static_cast<int>(ftau <= maxTau)) != 0;
-          if (!inTauWindow) {
-            continue;
-          }
-
           const float z0 = z1c - r1c * tau;
-
-          // then the z0 histogram, the r-z cuts and the curvature cut. The two
-          // flags are fixed per bin group, so their branches are predicted.
-          const bool inZ0Histogram =
-              !useZ0Histogram ||
-              checkZ0BitMask(m_cfg, nodeInfo, z0, z0HistoCoeff);
-
-          const float zOuter = z0 + m_cfg.maxOuterRadius * tau;
-          const bool inRZ = !m_cfg.doubletFilterRZ ||
-                            (static_cast<int>(z0 >= m_cfg.minZ0) &
-                             static_cast<int>(z0 <= m_cfg.maxZ0) &
-                             static_cast<int>(zOuter >= cutZMinU) &
-                             static_cast<int>(zOuter <= cutZMaxU)) != 0;
-
-          const float curv = (phi2 - phi1) / dr;
-          const float curvCut = ftau < m_cfg.curvatureSplitAbsTau
-                                    ? curvatureCutLowEta
-                                    : curvatureCutHighEta;
-
-          const bool inCurvature = std::abs(curv) <= curvCut;
-
-          if ((static_cast<int>(inZ0Histogram) & static_cast<int>(inRZ) &
-               static_cast<int>(inCurvature)) == 0) {
-            continue;
-          }
 
           const float hypotTau = fastHypot(1, tau);
           const float expEta = hypotTau - tau;

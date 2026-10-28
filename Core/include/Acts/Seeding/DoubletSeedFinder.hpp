@@ -330,9 +330,9 @@ class DoubletSeedFinder {
     bool useTime = false;
 
     /// Limiting location of collision region in z-axis used to check if doublet
-    /// origin is within reasonable bounds. A region symmetric about z = 0 is
-    /// tested with one multiplication, one comparison, any other with two
-    /// multiplications, two comparisons and one or operator.
+    /// origin is within reasonable bounds. A flag is used to check if this is
+    /// symmetric about z = 0 and will then use that assumption to simplify
+    /// some calculations
     float collisionRegionMin = -150 * UnitConstants::mm;
     /// Maximum collision region boundary in z-axis for doublet origin checks
     float collisionRegionMax = +150 * UnitConstants::mm;

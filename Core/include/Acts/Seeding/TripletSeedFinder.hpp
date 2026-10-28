@@ -13,7 +13,6 @@
 #include "Acts/Seeding/DoubletSeedFinder.hpp"
 #include "Acts/Utilities/detail/ContainerIterator.hpp"
 
-#include <utility>
 #include <vector>
 
 namespace Acts {
@@ -279,27 +278,23 @@ class TripletSeedFinder {
   ///
   /// @param spacePoints Space point container
   /// @param spM Space point candidate to be used as middle SP in a seed
-  /// @param bottomDoublets Bottom doublets still to be searched
-  /// @param topDoublets Top doublets to be used for triplet creation
+  /// @param bottomDoublets Bottom doublets still to be searched; on return
+  ///   they start with the bottom doublet that has candidates
+  /// @param topDoublets Top doublets to be used for triplet creation; on
+  ///   return advanced as by the overloads above
   /// @param tripletTopCandidates Cache for triplet top candidates
-  /// @return The bottom doublets starting with the one that has candidates,
-  ///   empty if none has, and the top doublets advanced as by the overloads
-  ///   above
-  [[nodiscard]] virtual std::pair<DoubletsForMiddleSp::Range,
-                                  DoubletsForMiddleSp::Range>
-  createNextTripletTopCandidates(
+  /// @return Whether a bottom doublet with candidates was found
+  virtual bool createNextTripletTopCandidates(
       const SpacePointContainer& spacePoints, const ConstSpacePointProxy& spM,
-      DoubletsForMiddleSp::Range bottomDoublets,
-      DoubletsForMiddleSp::Range topDoublets,
+      DoubletsForMiddleSp::Range& bottomDoublets,
+      DoubletsForMiddleSp::Range& topDoublets,
       TripletTopCandidates& tripletTopCandidates) const = 0;
 
-  /// @copydoc createNextTripletTopCandidates(const SpacePointContainer&, const ConstSpacePointProxy&, DoubletsForMiddleSp::Range, DoubletsForMiddleSp::Range, TripletTopCandidates&) const
-  [[nodiscard]] virtual std::pair<DoubletsForMiddleSp::Subset2,
-                                  DoubletsForMiddleSp::Subset2>
-  createNextTripletTopCandidates(
+  /// @copydoc createNextTripletTopCandidates(const SpacePointContainer&, const ConstSpacePointProxy&, DoubletsForMiddleSp::Range&, DoubletsForMiddleSp::Range&, TripletTopCandidates&) const
+  virtual bool createNextTripletTopCandidates(
       const SpacePointContainer& spacePoints, const ConstSpacePointProxy& spM,
-      DoubletsForMiddleSp::Subset2 bottomDoublets,
-      DoubletsForMiddleSp::Subset2 topDoublets,
+      DoubletsForMiddleSp::Subset2& bottomDoublets,
+      DoubletsForMiddleSp::Subset2& topDoublets,
       TripletTopCandidates& tripletTopCandidates) const = 0;
 };
 

@@ -13,7 +13,6 @@
 #include "Acts/Seeding/TripletSeedFinder.hpp"
 
 #include <iterator>
-#include <tuple>
 #include <utility>
 
 #include <Eigen/Dense>
@@ -78,7 +77,7 @@ class TripletTopCandidatesRange {
     }
 
     bool operator==(std::default_sentinel_t /*end*/) const {
-      return m_range->m_bottomDoublets.empty();
+      return !m_range->m_found;
     }
 
    private:
@@ -93,10 +92,9 @@ class TripletTopCandidatesRange {
 
  private:
   void findNext() {
-    std::tie(m_bottomDoublets, m_topDoublets) =
-        m_finder.createNextTripletTopCandidates(m_spacePoints, m_spM,
-                                                m_bottomDoublets, m_topDoublets,
-                                                m_tripletTopCandidates);
+    m_found = m_finder.createNextTripletTopCandidates(
+        m_spacePoints, m_spM, m_bottomDoublets, m_topDoublets,
+        m_tripletTopCandidates);
   }
 
   const TripletSeedFinder& m_finder;
@@ -105,6 +103,7 @@ class TripletTopCandidatesRange {
   DoubletCollections m_bottomDoublets;
   DoubletCollections m_topDoublets;
   TripletTopCandidates& m_tripletTopCandidates;
+  bool m_found{};
 };
 
 template <typename DoubletCollections>

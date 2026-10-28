@@ -13,6 +13,8 @@
 #include "Acts/Seeding/DoubletSeedFinder.hpp"
 #include "Acts/Utilities/detail/ContainerIterator.hpp"
 
+#include <iterator>
+#include <utility>
 #include <vector>
 
 namespace Acts {
@@ -272,6 +274,123 @@ class TripletSeedFinder {
       const DoubletsForMiddleSp::Proxy& bottomDoublet,
       DoubletsForMiddleSp::Subset2 topDoublets,
       TripletTopCandidates& tripletTopCandidates) const = 0;
+
+  /// Create the triplet top candidates of the next bottom doublet that has
+  /// any, searching the bottom doublets in order.
+  ///
+  /// @param spacePoints Space point container
+  /// @param spM Space point candidate to be used as middle SP in a seed
+  /// @param bottomDoublets Bottom doublets still to be searched; on return
+  ///   they start with the bottom doublet that has candidates
+  /// @param topDoublets Top doublets to be used for triplet creation; on
+  ///   return advanced as by the overloads above
+  /// @param tripletTopCandidates Cache for triplet top candidates
+  /// @return Whether a bottom doublet with candidates was found
+  virtual bool createNextTripletTopCandidates(
+      const SpacePointContainer& spacePoints, const ConstSpacePointProxy& spM,
+      DoubletsForMiddleSp::Range& bottomDoublets,
+      DoubletsForMiddleSp::Range& topDoublets,
+      TripletTopCandidates& tripletTopCandidates) const = 0;
+
+  /// Create the triplet top candidates of the next bottom doublet that has
+  /// any, searching the bottom doublets in order.
+  ///
+  /// @param spacePoints Space point container
+  /// @param spM Space point candidate to be used as middle SP in a seed
+  /// @param bottomDoublets Bottom doublets still to be searched; on return
+  ///   they start with the bottom doublet that has candidates
+  /// @param topDoublets Top doublets to be used for triplet creation; on
+  ///   return advanced as by the overloads above
+  /// @param tripletTopCandidates Cache for triplet top candidates
+  /// @return Whether a bottom doublet with candidates was found
+  virtual bool createNextTripletTopCandidates(
+      const SpacePointContainer& spacePoints, const ConstSpacePointProxy& spM,
+      DoubletsForMiddleSp::Subset2& bottomDoublets,
+      DoubletsForMiddleSp::Subset2& topDoublets,
+      TripletTopCandidates& tripletTopCandidates) const = 0;
+};
+
+/// The bottom doublets of a middle space point that have triplet top
+/// candidates, each with its candidates, found one bottom doublet at a time
+/// while iterating.
+///
+/// @tparam DoubletCollections Type of the bottom and top doublet views
+template <typename DoubletCollections>
+class TripletTopCandidatesRange {
+ public:
+  /// @param finder Triplet seed finder searching each bottom doublet
+  /// @param spacePoints Space point container
+  /// @param spM Middle space point
+  /// @param bottomDoublets Bottom doublets to iterate over
+  /// @param topDoublets Top doublets to search
+  /// @param tripletTopCandidates Cache for triplet top candidates
+  TripletTopCandidatesRange(const TripletSeedFinder& finder,
+                            const SpacePointContainer& spacePoints,
+                            const ConstSpacePointProxy& spM,
+                            DoubletCollections bottomDoublets,
+                            DoubletCollections topDoublets,
+                            TripletTopCandidates& tripletTopCandidates)
+      : m_finder(&finder),
+        m_spacePoints(&spacePoints),
+        m_spM(&spM),
+        m_bottomDoublets(bottomDoublets),
+        m_topDoublets(topDoublets),
+        m_tripletTopCandidates(&tripletTopCandidates) {}
+
+  /// Iterator over the bottom doublets with triplet top candidates. The
+  /// candidates are only valid until the iterator is advanced.
+  class Iterator {
+   public:
+    /// @param range The range to iterate over
+    explicit Iterator(const TripletTopCandidatesRange& range)
+        : m_range(&range),
+          m_bottomDoublets(range.m_bottomDoublets),
+          m_topDoublets(range.m_topDoublets) {
+      findCandidates();
+    }
+
+    /// @return The bottom doublet and its triplet top candidates
+    std::pair<DoubletsForMiddleSp::Proxy, const TripletTopCandidates&>
+    operator*() const {
+      return {*m_bottomDoublets.begin(), *m_range->m_tripletTopCandidates};
+    }
+
+    /// Advance to the next bottom doublet with triplet top candidates
+    /// @return This iterator
+    Iterator& operator++() {
+      m_bottomDoublets = m_bottomDoublets.subrange(1);
+      findCandidates();
+      return *this;
+    }
+
+    /// @return Whether no bottom doublet with candidates is left
+    bool operator==(std::default_sentinel_t /*end*/) const { return !m_found; }
+
+   private:
+    void findCandidates() {
+      m_found = m_range->m_finder->createNextTripletTopCandidates(
+          *m_range->m_spacePoints, *m_range->m_spM, m_bottomDoublets,
+          m_topDoublets, *m_range->m_tripletTopCandidates);
+    }
+
+    const TripletTopCandidatesRange* m_range{};
+    DoubletCollections m_bottomDoublets;
+    DoubletCollections m_topDoublets;
+    bool m_found{};
+  };
+
+  /// @return Iterator to the first bottom doublet with triplet top candidates
+  Iterator begin() const { return Iterator(*this); }
+  /// @return Sentinel for the end of the range
+  std::default_sentinel_t end() const { return {}; }
+
+ private:
+  const TripletSeedFinder* m_finder{};
+  const SpacePointContainer* m_spacePoints{};
+  const ConstSpacePointProxy* m_spM{};
+  DoubletCollections m_bottomDoublets;
+  DoubletCollections m_topDoublets;
+  TripletTopCandidates* m_tripletTopCandidates{};
 };
 
 }  // namespace Acts

@@ -530,6 +530,48 @@ class Impl final : public TripletSeedFinder {
     }
   }
 
+  template <typename DoubletCollections>
+  bool createNextTripletTopCandidatesImpl(
+      const SpacePointContainer& spacePoints, const ConstSpacePointProxy& spM,
+      DoubletCollections& bottomDoublets, DoubletCollections& topDoublets,
+      TripletTopCandidates& tripletTopCandidates) const {
+    for (; !bottomDoublets.empty() && !topDoublets.empty();
+         bottomDoublets = bottomDoublets.subrange(1)) {
+      tripletTopCandidates.clear();
+      const auto bottomDoublet = *bottomDoublets.begin();
+      if constexpr (useStripInfo) {
+        topDoublets = createStripTripletTopCandidates(
+            spacePoints, spM, bottomDoublet, topDoublets, tripletTopCandidates);
+      } else {
+        topDoublets = createPixelTripletTopCandidates(
+            spacePoints, spM, bottomDoublet, topDoublets, tripletTopCandidates);
+      }
+
+      if (tripletTopCandidates.size() > 0) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  bool createNextTripletTopCandidates(
+      const SpacePointContainer& spacePoints, const ConstSpacePointProxy& spM,
+      DoubletsForMiddleSp::Range& bottomDoublets,
+      DoubletsForMiddleSp::Range& topDoublets,
+      TripletTopCandidates& tripletTopCandidates) const override {
+    return createNextTripletTopCandidatesImpl(
+        spacePoints, spM, bottomDoublets, topDoublets, tripletTopCandidates);
+  }
+
+  bool createNextTripletTopCandidates(
+      const SpacePointContainer& spacePoints, const ConstSpacePointProxy& spM,
+      DoubletsForMiddleSp::Subset2& bottomDoublets,
+      DoubletsForMiddleSp::Subset2& topDoublets,
+      TripletTopCandidates& tripletTopCandidates) const override {
+    return createNextTripletTopCandidatesImpl(
+        spacePoints, spM, bottomDoublets, topDoublets, tripletTopCandidates);
+  }
+
  private:
   DerivedConfig m_cfg;
 };

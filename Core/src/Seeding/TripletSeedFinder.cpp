@@ -530,6 +530,52 @@ class Impl final : public TripletSeedFinder {
     }
   }
 
+  template <typename DoubletCollections>
+  void createTripletTopCandidatesImpl(
+      const SpacePointContainer& spacePoints, const ConstSpacePointProxy& spM,
+      DoubletCollections bottomDoublets, DoubletCollections topDoublets,
+      TripletTopCandidates& tripletTopCandidates,
+      const CandidatesCallback& callback) const {
+    for (auto bottomDoublet : bottomDoublets) {
+      if (topDoublets.empty()) {
+        break;
+      }
+
+      tripletTopCandidates.clear();
+      if constexpr (useStripInfo) {
+        topDoublets = createStripTripletTopCandidates(
+            spacePoints, spM, bottomDoublet, topDoublets, tripletTopCandidates);
+      } else {
+        topDoublets = createPixelTripletTopCandidates(
+            spacePoints, spM, bottomDoublet, topDoublets, tripletTopCandidates);
+      }
+
+      if (tripletTopCandidates.size() > 0) {
+        callback(bottomDoublet, tripletTopCandidates);
+      }
+    }
+  }
+
+  void createTripletTopCandidates(
+      const SpacePointContainer& spacePoints, const ConstSpacePointProxy& spM,
+      DoubletsForMiddleSp::Range bottomDoublets,
+      DoubletsForMiddleSp::Range topDoublets,
+      TripletTopCandidates& tripletTopCandidates,
+      const CandidatesCallback& callback) const override {
+    createTripletTopCandidatesImpl(spacePoints, spM, bottomDoublets,
+                                   topDoublets, tripletTopCandidates, callback);
+  }
+
+  void createTripletTopCandidates(
+      const SpacePointContainer& spacePoints, const ConstSpacePointProxy& spM,
+      DoubletsForMiddleSp::Subset2 bottomDoublets,
+      DoubletsForMiddleSp::Subset2 topDoublets,
+      TripletTopCandidates& tripletTopCandidates,
+      const CandidatesCallback& callback) const override {
+    createTripletTopCandidatesImpl(spacePoints, spM, bottomDoublets,
+                                   topDoublets, tripletTopCandidates, callback);
+  }
+
  private:
   DerivedConfig m_cfg;
 };

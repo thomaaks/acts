@@ -535,23 +535,30 @@ class Impl final : public TripletSeedFinder {
       const SpacePointContainer& spacePoints, const ConstSpacePointProxy& spM,
       DoubletCollections& bottomDoublets, DoubletCollections& topDoublets,
       TripletTopCandidates& tripletTopCandidates) const {
-    for (; !bottomDoublets.empty() && !topDoublets.empty();
-         bottomDoublets = bottomDoublets.subrange(1)) {
+    // search on local copies, so that the views can stay in registers while
+    // the candidates are written
+    DoubletCollections bottoms = bottomDoublets;
+    DoubletCollections tops = topDoublets;
+    bool found = false;
+    for (; !bottoms.empty() && !tops.empty(); bottoms = bottoms.subrange(1)) {
       tripletTopCandidates.clear();
-      const auto bottomDoublet = *bottomDoublets.begin();
+      const auto bottomDoublet = *bottoms.begin();
       if constexpr (useStripInfo) {
-        topDoublets = createStripTripletTopCandidates(
-            spacePoints, spM, bottomDoublet, topDoublets, tripletTopCandidates);
+        tops = createStripTripletTopCandidates(spacePoints, spM, bottomDoublet,
+                                               tops, tripletTopCandidates);
       } else {
-        topDoublets = createPixelTripletTopCandidates(
-            spacePoints, spM, bottomDoublet, topDoublets, tripletTopCandidates);
+        tops = createPixelTripletTopCandidates(spacePoints, spM, bottomDoublet,
+                                               tops, tripletTopCandidates);
       }
 
       if (tripletTopCandidates.size() > 0) {
-        return true;
+        found = true;
+        break;
       }
     }
-    return false;
+    bottomDoublets = bottoms;
+    topDoublets = tops;
+    return found;
   }
 
   bool createNextTripletTopCandidates(

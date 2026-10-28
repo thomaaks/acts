@@ -238,10 +238,7 @@ class TripletSeedFinder {
   /// @param tripletTopCandidates Cache for triplet top candidates
   /// @return The top doublets that can still be compatible with a subsequent
   ///   bottom doublet, see the note above
-  [[deprecated(
-      "Use the overload taking all bottom doublets and a "
-      "CandidatesCallback")]] [[nodiscard]] virtual DoubletsForMiddleSp::Range
-  createTripletTopCandidates(
+  [[nodiscard]] virtual DoubletsForMiddleSp::Range createTripletTopCandidates(
       const SpacePointContainer& spacePoints, const ConstSpacePointProxy& spM,
       const DoubletsForMiddleSp::Proxy& bottomDoublet,
       DoubletsForMiddleSp::Range topDoublets,
@@ -256,10 +253,7 @@ class TripletSeedFinder {
   /// @param tripletTopCandidates Cache for triplet top candidates
   /// @return The top doublets that can still be compatible with a subsequent
   ///   bottom doublet, see the note above
-  [[deprecated(
-      "Use the overload taking all bottom doublets and a "
-      "CandidatesCallback")]] [[nodiscard]] virtual DoubletsForMiddleSp::Subset
-  createTripletTopCandidates(
+  [[nodiscard]] virtual DoubletsForMiddleSp::Subset createTripletTopCandidates(
       const SpacePointContainer& spacePoints, const ConstSpacePointProxy& spM,
       const DoubletsForMiddleSp::Proxy& bottomDoublet,
       DoubletsForMiddleSp::Subset topDoublets,
@@ -274,10 +268,7 @@ class TripletSeedFinder {
   /// @param tripletTopCandidates Cache for triplet top candidates
   /// @return The top doublets that can still be compatible with a subsequent
   ///   bottom doublet, see the note above
-  [[deprecated(
-      "Use the overload taking all bottom doublets and a "
-      "CandidatesCallback")]] [[nodiscard]] virtual DoubletsForMiddleSp::Subset2
-  createTripletTopCandidates(
+  [[nodiscard]] virtual DoubletsForMiddleSp::Subset2 createTripletTopCandidates(
       const SpacePointContainer& spacePoints, const ConstSpacePointProxy& spM,
       const DoubletsForMiddleSp::Proxy& bottomDoublet,
       DoubletsForMiddleSp::Subset2 topDoublets,

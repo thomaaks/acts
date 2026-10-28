@@ -88,10 +88,6 @@ class Impl final : public TripletSeedFinder {
       varianceTB = spB.varianceT();
     }
 
-    // Reserve enough space, in case current capacity is too little
-    tripletTopCandidates.reserve(tripletTopCandidates.size() +
-                                 topDoublets.size());
-
     const float cotThetaB = bottomDoublet.cotTheta();
     const float erB = bottomDoublet.er();
     const float iDeltaRB = bottomDoublet.iDeltaR();
@@ -229,10 +225,6 @@ class Impl final : public TripletSeedFinder {
     const float sinPhiM = spM.xy()[1] / rM;
     const float varianceZM = spM.varianceZ();
     const float varianceRM = spM.varianceR();
-
-    // Reserve enough space, in case current capacity is too little
-    tripletTopCandidates.reserve(tripletTopCandidates.size() +
-                                 topDoublets.size());
 
     const float cotThetaB0 = bottomDoublet.cotTheta();
     const float erB = bottomDoublet.er();
@@ -493,6 +485,10 @@ class Impl final : public TripletSeedFinder {
       const DoubletsForMiddleSp::Proxy& bottomDoublet,
       DoubletsForMiddleSp::Range topDoublets,
       TripletTopCandidates& tripletTopCandidates) const override {
+    // Reserve enough space, in case current capacity is too little
+    tripletTopCandidates.reserve(tripletTopCandidates.size() +
+                                 topDoublets.size());
+
     if constexpr (useStripInfo) {
       return createStripTripletTopCandidates(spacePoints, spM, bottomDoublet,
                                              topDoublets, tripletTopCandidates);
@@ -507,6 +503,10 @@ class Impl final : public TripletSeedFinder {
       const DoubletsForMiddleSp::Proxy& bottomDoublet,
       DoubletsForMiddleSp::Subset topDoublets,
       TripletTopCandidates& tripletTopCandidates) const override {
+    // Reserve enough space, in case current capacity is too little
+    tripletTopCandidates.reserve(tripletTopCandidates.size() +
+                                 topDoublets.size());
+
     if constexpr (useStripInfo) {
       return createStripTripletTopCandidates(spacePoints, spM, bottomDoublet,
                                              topDoublets, tripletTopCandidates);
@@ -521,6 +521,10 @@ class Impl final : public TripletSeedFinder {
       const DoubletsForMiddleSp::Proxy& bottomDoublet,
       DoubletsForMiddleSp::Subset2 topDoublets,
       TripletTopCandidates& tripletTopCandidates) const override {
+    // Reserve enough space, in case current capacity is too little
+    tripletTopCandidates.reserve(tripletTopCandidates.size() +
+                                 topDoublets.size());
+
     if constexpr (useStripInfo) {
       return createStripTripletTopCandidates(spacePoints, spM, bottomDoublet,
                                              topDoublets, tripletTopCandidates);
@@ -539,6 +543,9 @@ class Impl final : public TripletSeedFinder {
     // the candidates are written
     DoubletCollections bottoms = bottomDoublets;
     DoubletCollections tops = topDoublets;
+    // the candidates are cleared for each bottom doublet and the top doublets
+    // only shrink, so this covers every bottom doublet searched here
+    tripletTopCandidates.reserve(tops.size());
     bool found = false;
     for (; !bottoms.empty() && !tops.empty(); bottoms = bottoms.subrange(1)) {
       tripletTopCandidates.clear();

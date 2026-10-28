@@ -13,6 +13,8 @@
 #include "Acts/Seeding/DoubletSeedFinder.hpp"
 #include "Acts/Utilities/detail/ContainerIterator.hpp"
 
+#include <iterator>
+#include <utility>
 #include <vector>
 
 namespace Acts {
@@ -272,6 +274,104 @@ class TripletSeedFinder {
       const DoubletsForMiddleSp::Proxy& bottomDoublet,
       DoubletsForMiddleSp::Subset2 topDoublets,
       TripletTopCandidates& tripletTopCandidates) const = 0;
+};
+
+/// The bottom doublets of a middle space point that have triplet top
+/// candidates, each with its candidates, found one bottom doublet at a time
+/// while iterating.
+///
+/// @tparam DoubletCollections Type of the bottom and top doublet views
+template <typename DoubletCollections>
+class TripletTopCandidatesRange {
+ public:
+  /// @param finder Triplet seed finder searching each bottom doublet
+  /// @param spacePoints Space point container
+  /// @param spM Middle space point
+  /// @param bottomDoublets Bottom doublets to iterate over
+  /// @param topDoublets Top doublets to search
+  /// @param tripletTopCandidates Cache for triplet top candidates
+  TripletTopCandidatesRange(const TripletSeedFinder& finder,
+                            const SpacePointContainer& spacePoints,
+                            const ConstSpacePointProxy& spM,
+                            DoubletCollections bottomDoublets,
+                            DoubletCollections topDoublets,
+                            TripletTopCandidates& tripletTopCandidates)
+      : m_finder(&finder),
+        m_spacePoints(&spacePoints),
+        m_spM(&spM),
+        m_bottomDoublets(bottomDoublets),
+        m_topDoublets(topDoublets),
+        m_tripletTopCandidates(&tripletTopCandidates) {}
+
+  /// Iterator over the bottom doublets with triplet top candidates. The
+  /// candidates are only valid until the iterator is advanced.
+  class Iterator {
+   public:
+    /// @param range The range to iterate over
+    explicit Iterator(const TripletTopCandidatesRange& range)
+        : m_range(&range),
+          m_bottom(range.m_bottomDoublets.begin()),
+          m_bottomEnd(range.m_bottomDoublets.end()),
+          m_topDoublets(range.m_topDoublets) {
+      findCandidates();
+    }
+
+    /// @return The bottom doublet and its triplet top candidates
+    std::pair<DoubletsForMiddleSp::Proxy, const TripletTopCandidates&>
+    operator*() const {
+      return {*m_bottom, *m_range->m_tripletTopCandidates};
+    }
+
+    /// Advance to the next bottom doublet with triplet top candidates
+    /// @return This iterator
+    Iterator& operator++() {
+      ++m_bottom;
+      findCandidates();
+      return *this;
+    }
+
+    /// @return Whether no bottom doublet with candidates is left
+    bool operator==(std::default_sentinel_t /*end*/) const {
+      return m_bottom == m_bottomEnd;
+    }
+
+   private:
+    void findCandidates() {
+      for (; m_bottom != m_bottomEnd; ++m_bottom) {
+        if (m_topDoublets.empty()) {
+          m_bottom = m_bottomEnd;
+          return;
+        }
+
+        m_range->m_tripletTopCandidates->clear();
+        m_topDoublets = m_range->m_finder->createTripletTopCandidates(
+            *m_range->m_spacePoints, *m_range->m_spM, *m_bottom, m_topDoublets,
+            *m_range->m_tripletTopCandidates);
+
+        if (m_range->m_tripletTopCandidates->size() > 0) {
+          return;
+        }
+      }
+    }
+
+    const TripletTopCandidatesRange* m_range{};
+    decltype(std::declval<const DoubletCollections&>().begin()) m_bottom;
+    decltype(std::declval<const DoubletCollections&>().end()) m_bottomEnd;
+    DoubletCollections m_topDoublets;
+  };
+
+  /// @return Iterator to the first bottom doublet with triplet top candidates
+  Iterator begin() const { return Iterator(*this); }
+  /// @return Sentinel for the end of the range
+  std::default_sentinel_t end() const { return {}; }
+
+ private:
+  const TripletSeedFinder* m_finder{};
+  const SpacePointContainer* m_spacePoints{};
+  const ConstSpacePointProxy* m_spM{};
+  DoubletCollections m_bottomDoublets;
+  DoubletCollections m_topDoublets;
+  TripletTopCandidates* m_tripletTopCandidates{};
 };
 
 }  // namespace Acts

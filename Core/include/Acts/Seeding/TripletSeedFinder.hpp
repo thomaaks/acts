@@ -13,7 +13,9 @@
 #include "Acts/Seeding/DoubletSeedFinder.hpp"
 #include "Acts/Utilities/detail/ContainerIterator.hpp"
 
+#include <cassert>
 #include <iterator>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -30,47 +32,49 @@ class TripletTopCandidates {
 
   /// @brief Returns the number of triplet candidates stored
   /// @return Number of triplet candidates in the container
-  Index size() const { return static_cast<Index>(m_topSpacePoints.size()); }
+  Index size() const { return m_size; }
 
   /// @brief Reserves storage space for the specified number of candidates
   /// @param size Number of candidates to reserve space for
   void reserve(Index size) {
-    m_topSpacePoints.reserve(size);
-    m_curvatures.reserve(size);
-    m_impactParameters.reserve(size);
+    if (m_topSpacePoints.size() < size) {
+      m_topSpacePoints.resize(size);
+      m_curvatures.resize(size);
+      m_impactParameters.resize(size);
+    }
   }
 
   /// @brief Clears all stored triplet candidates
-  /// Removes all candidates from the container and frees memory
-  void clear() {
-    m_topSpacePoints.clear();
-    m_curvatures.clear();
-    m_impactParameters.clear();
-  }
+  void clear() { m_size = 0; }
 
   /// @brief Adds a new triplet candidate to the container
   /// @param spT Space point index for the top space point of the triplet
   /// @param curvature Track curvature estimation for the triplet
   /// @param impactParameter Impact parameter estimation for the triplet
+  /// @note The space has to be reserved before
   void emplace_back(SpacePointIndex spT, float curvature,
                     float impactParameter) {
-    m_topSpacePoints.emplace_back(spT);
-    m_curvatures.emplace_back(curvature);
-    m_impactParameters.emplace_back(impactParameter);
+    assert(m_size < m_topSpacePoints.size() && "Space was not reserved");
+    m_topSpacePoints[m_size] = spT;
+    m_curvatures[m_size] = curvature;
+    m_impactParameters[m_size] = impactParameter;
+    ++m_size;
   }
 
   /// @brief Returns the vector of top space point indices
   /// @return Const reference to vector containing all top space point indices
-  const std::vector<SpacePointIndex>& topSpacePoints() const {
-    return m_topSpacePoints;
+  std::span<const SpacePointIndex> topSpacePoints() const {
+    return std::span(m_topSpacePoints).first(m_size);
   }
   /// @brief Returns the vector of track curvature estimations
   /// @return Const reference to vector containing curvature values for all candidates
-  const std::vector<float>& curvatures() const { return m_curvatures; }
+  std::span<const float> curvatures() const {
+    return std::span(m_curvatures).first(m_size);
+  }
   /// @brief Returns the vector of impact parameter estimations
   /// @return Const reference to vector containing impact parameter values for all candidates
-  const std::vector<float>& impactParameters() const {
-    return m_impactParameters;
+  std::span<const float> impactParameters() const {
+    return std::span(m_impactParameters).first(m_size);
   }
 
   /// Proxy providing access to a triplet candidate.
@@ -123,6 +127,7 @@ class TripletTopCandidates {
   std::vector<SpacePointIndex> m_topSpacePoints;
   std::vector<float> m_curvatures;
   std::vector<float> m_impactParameters;
+  Index m_size{};
 };
 
 /// Interface and a collection of standard implementations for a triplet seed

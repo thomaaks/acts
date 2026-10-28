@@ -12,6 +12,9 @@
 #include "Acts/Seeding/DoubletSeedFinder.hpp"
 #include "Acts/Seeding/TripletSeedFinder.hpp"
 
+#include <iterator>
+#include <utility>
+
 #include <Eigen/Dense>
 
 namespace Acts {
@@ -38,6 +41,71 @@ void advanceGroup(SpacePointGroup& group, Predicate isInRange) {
   group = group.subrange(offset);
 }
 
+/// The bottom doublets of a middle space point that have triplet top
+/// candidates, each with its candidates. It can be iterated once, and the
+/// candidates are only valid until the iterator is advanced.
+template <typename DoubletCollections>
+class TripletTopCandidatesRange {
+ public:
+  TripletTopCandidatesRange(const TripletSeedFinder& finder,
+                            const SpacePointContainer& spacePoints,
+                            const ConstSpacePointProxy& spM,
+                            DoubletCollections bottomDoublets,
+                            DoubletCollections topDoublets,
+                            TripletTopCandidates& tripletTopCandidates)
+      : m_finder(finder),
+        m_spacePoints(spacePoints),
+        m_spM(spM),
+        m_bottomDoublets(bottomDoublets),
+        m_topDoublets(topDoublets),
+        m_tripletTopCandidates(tripletTopCandidates) {}
+
+  class Iterator {
+   public:
+    explicit Iterator(TripletTopCandidatesRange& range) : m_range(&range) {}
+
+    std::pair<DoubletsForMiddleSp::Proxy, const TripletTopCandidates&>
+    operator*() const {
+      return {*m_range->m_bottomDoublets.begin(),
+              m_range->m_tripletTopCandidates};
+    }
+
+    Iterator& operator++() {
+      m_range->m_bottomDoublets = m_range->m_bottomDoublets.subrange(1);
+      m_range->findNext();
+      return *this;
+    }
+
+    bool operator==(std::default_sentinel_t /*end*/) const {
+      return !m_range->m_found;
+    }
+
+   private:
+    TripletTopCandidatesRange* m_range{};
+  };
+
+  Iterator begin() {
+    findNext();
+    return Iterator(*this);
+  }
+  std::default_sentinel_t end() const { return {}; }
+
+ private:
+  void findNext() {
+    m_found = m_finder.createNextTripletTopCandidates(
+        m_spacePoints, m_spM, m_bottomDoublets, m_topDoublets,
+        m_tripletTopCandidates);
+  }
+
+  const TripletSeedFinder& m_finder;
+  const SpacePointContainer& m_spacePoints;
+  const ConstSpacePointProxy& m_spM;
+  DoubletCollections m_bottomDoublets;
+  DoubletCollections m_topDoublets;
+  TripletTopCandidates& m_tripletTopCandidates;
+  bool m_found{};
+};
+
 template <typename DoubletCollections>
 void createAndFilterTriplets(TripletSeeder::Cache& cache,
                              const TripletSeedFinder& tripletFinder,
@@ -46,18 +114,11 @@ void createAndFilterTriplets(TripletSeeder::Cache& cache,
                              DoubletCollections bottomDoublets,
                              const ConstSpacePointProxy& spM,
                              DoubletCollections topDoublets) {
-  for (auto bottomDoublet : bottomDoublets) {
-    if (topDoublets.empty()) {
-      break;
-    }
-
-    cache.tripletTopCandidates.clear();
-    topDoublets = tripletFinder.createTripletTopCandidates(
-        spacePoints, spM, bottomDoublet, topDoublets,
-        cache.tripletTopCandidates);
-
+  for (const auto& [bottomDoublet, candidates] : TripletTopCandidatesRange(
+           tripletFinder, spacePoints, spM, bottomDoublets, topDoublets,
+           cache.tripletTopCandidates)) {
     filter.filterTripletTopCandidates(spacePoints, spM, bottomDoublet,
-                                      cache.tripletTopCandidates);
+                                      candidates);
   }
 }
 

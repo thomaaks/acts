@@ -272,6 +272,30 @@ class TripletSeedFinder {
       const DoubletsForMiddleSp::Proxy& bottomDoublet,
       DoubletsForMiddleSp::Subset2 topDoublets,
       TripletTopCandidates& tripletTopCandidates) const = 0;
+
+  /// Create the triplet top candidates of the next bottom doublet that has
+  /// any, searching the bottom doublets in order.
+  ///
+  /// @param spacePoints Space point container
+  /// @param spM Space point candidate to be used as middle SP in a seed
+  /// @param bottomDoublets Bottom doublets still to be searched; on return
+  ///   they start with the bottom doublet that has candidates
+  /// @param topDoublets Top doublets to be used for triplet creation; on
+  ///   return advanced as by the overloads above
+  /// @param tripletTopCandidates Cache for triplet top candidates
+  /// @return Whether a bottom doublet with candidates was found
+  virtual bool createNextTripletTopCandidates(
+      const SpacePointContainer& spacePoints, const ConstSpacePointProxy& spM,
+      DoubletsForMiddleSp::Range& bottomDoublets,
+      DoubletsForMiddleSp::Range& topDoublets,
+      TripletTopCandidates& tripletTopCandidates) const = 0;
+
+  /// @copydoc createNextTripletTopCandidates(const SpacePointContainer&, const ConstSpacePointProxy&, DoubletsForMiddleSp::Range&, DoubletsForMiddleSp::Range&, TripletTopCandidates&) const
+  virtual bool createNextTripletTopCandidates(
+      const SpacePointContainer& spacePoints, const ConstSpacePointProxy& spM,
+      DoubletsForMiddleSp::Subset2& bottomDoublets,
+      DoubletsForMiddleSp::Subset2& topDoublets,
+      TripletTopCandidates& tripletTopCandidates) const = 0;
 };
 
 }  // namespace Acts

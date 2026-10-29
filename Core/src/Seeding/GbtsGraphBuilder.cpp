@@ -373,6 +373,31 @@ GbtsGraph GbtsGraphBuilder::buildTheGraph(const GbtsRoiDescriptor& roi,
         }
       }
 
+      // The z0 and zOuter cuts on a pixel pair as bounds on its tau, from n1
+      // alone: z0 = z1 - r1 * tau and zOuter = z1 + (maxOuterRadius - r1) *
+      // tau, each in its range. A pair below then tests its tau against two
+      // bounds instead of computing both. A strip pair's ends are calibrated
+      // per pair, so it keeps the cuts as they are.
+      const bool rzByTau = m_cfg.doubletFilterRZ && r1 > 0;
+      float rzMinTau = std::numeric_limits<float>::lowest();
+      float rzMaxTau = std::numeric_limits<float>::max();
+      if (rzByTau) {
+        rzMinTau = (z1 - m_cfg.maxZ0) / r1;
+        rzMaxTau = (z1 - m_cfg.minZ0) / r1;
+        const float outerDr = m_cfg.maxOuterRadius - r1;
+        if (outerDr > 0) {
+          rzMinTau = std::max(rzMinTau, (cutZMinU - z1) / outerDr);
+          rzMaxTau = std::min(rzMaxTau, (cutZMaxU - z1) / outerDr);
+        } else if (outerDr < 0) {
+          rzMinTau = std::max(rzMinTau, (cutZMaxU - z1) / outerDr);
+          rzMaxTau = std::min(rzMaxTau, (cutZMinU - z1) / outerDr);
+        } else if (z1 < cutZMinU || z1 > cutZMaxU) {
+          // zOuter is z1 for every tau: no pair passes
+          rzMinTau = std::numeric_limits<float>::max();
+          rzMaxTau = std::numeric_limits<float>::lowest();
+        }
+      }
+
       // Whether a pair with n2 in a window with tau in [tauLo, tauHi] could
       // land in the window's bin, z2 - z1 being tau * dr. The float rounding
       // of the bounds is far below the margin, which only keeps the test from
@@ -550,7 +575,11 @@ GbtsGraph GbtsGraphBuilder::buildTheGraph(const GbtsRoiDescriptor& roi,
             continue;
           }
 
-          if (m_cfg.doubletFilterRZ) {
+          if (rzByTau && !stripPair) {
+            if (tau < rzMinTau || tau > rzMaxTau) {
+              continue;
+            }
+          } else if (m_cfg.doubletFilterRZ) {
             if (z0 < m_cfg.minZ0 || z0 > m_cfg.maxZ0) {
               continue;
             }

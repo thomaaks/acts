@@ -129,6 +129,8 @@ void GbtsNodeStorage::finalize() {
   m_nodes.reserve(nNodes);
   m_layers.reserve(nNodes);
 
+  const float dphi = m_cfg.phiIndexMargin * m_cfg.phiSliceWidth;
+
   // Node order across all bins, used to fill the derived columns below.
   std::vector<std::uint32_t> nodeOrder;
   nodeOrder.reserve(nNodes);
@@ -171,6 +173,34 @@ void GbtsNodeStorage::finalize() {
     binInfo.barrelOrder = description.barrelOrder;
     binInfo.type = description.type;
     binInfo.technology = description.technology;
+
+    // The bin's (phi, node) pairs in phi order, straight from the sorted
+    // staged nodes, with those within the margin of the wrap-around repeated
+    // shifted by 2pi so the phi sliding window never has to wrap.
+    const SpacePointIndex first = binInfo.nodes.first;
+    const auto nSorted = static_cast<std::uint32_t>(sorted.size());
+
+    for (std::uint32_t k = 0; k < nSorted; ++k) {
+      const float phi = m_staged[sorted[k]].phi;
+      if (phi <= std::numbers::pi_v<float> - dphi) {
+        continue;
+      }
+      binInfo.phiNodes.emplace_back(phi - 2 * std::numbers::pi_v<float>,
+                                    first + k);
+    }
+
+    for (std::uint32_t k = 0; k < nSorted; ++k) {
+      binInfo.phiNodes.emplace_back(m_staged[sorted[k]].phi, first + k);
+    }
+
+    for (std::uint32_t k = 0; k < nSorted; ++k) {
+      const float phi = m_staged[sorted[k]].phi;
+      if (phi >= -std::numbers::pi_v<float> + dphi) {
+        break;
+      }
+      binInfo.phiNodes.emplace_back(phi + 2 * std::numbers::pi_v<float>,
+                                    first + k);
+    }
   }
 
   // Created now that the container has its final size, so that each column is
@@ -209,8 +239,6 @@ void GbtsNodeStorage::finalize() {
   }
 
   m_strips = std::move(strips);
-
-  generatePhiIndexing(m_cfg.phiIndexMargin * m_cfg.phiSliceWidth);
 
   m_staged.clear();
   m_staged.shrink_to_fit();
@@ -255,39 +283,6 @@ void GbtsNodeStorage::applyTauCuts(const StagedNode& staged,
   if (params.maxTau < 0) {
     // insufficient training data, do not cut on tau
     params.maxTau = std::numeric_limits<float>::infinity();
-  }
-}
-
-void GbtsNodeStorage::generatePhiIndexing(const float dphi) {
-  const std::span<const detail::GbtsNodeParams> params = m_paramsColumn->data();
-
-  for (detail::GbtsEtaBinInfo& bin : m_etaBins) {
-    if (bin.empty()) {
-      continue;
-    }
-
-    const SpacePointIndex begin = bin.nodes.first;
-    const SpacePointIndex end = bin.nodes.second;
-
-    for (SpacePointIndex node = begin; node < end; ++node) {
-      const float phi = params[node].phi;
-      if (phi <= std::numbers::pi_v<float> - dphi) {
-        continue;
-      }
-      bin.phiNodes.emplace_back(phi - 2 * std::numbers::pi_v<float>, node);
-    }
-
-    for (SpacePointIndex node = begin; node < end; ++node) {
-      bin.phiNodes.emplace_back(params[node].phi, node);
-    }
-
-    for (SpacePointIndex node = begin; node < end; ++node) {
-      const float phi = params[node].phi;
-      if (phi >= -std::numbers::pi_v<float> + dphi) {
-        break;
-      }
-      bin.phiNodes.emplace_back(phi + 2 * std::numbers::pi_v<float>, node);
-    }
   }
 }
 

@@ -87,6 +87,12 @@ GbtsLayer::GbtsLayer(const GbtsLayerDescription& layerDescription,
     return;
   }
 
+  for (std::uint32_t i = 1; i < numBins; ++i) {
+    m_tauEdges.push_back(static_cast<float>(
+        std::sinh(static_cast<double>(minEta) +
+                  i * static_cast<double>(m_binning.etaBinWidth))));
+  }
+
   float eta = minEta + 0.5f * m_binning.etaBinWidth;
 
   for (std::uint32_t i = 0; i < numBins; ++i) {
@@ -161,6 +167,22 @@ std::uint32_t GbtsLayer::getEtaBin(const float zh, const float rh) const {
   }
 
   const float t1 = zh / rh;
+
+  // eta = asinh(t1) rises with t1, so away from the bin edges its bin is the
+  // number of edges at or below t1. Within a hair of one, or where the
+  // cancellation below costs eta its precision, the formula decides, as ever.
+  if (std::abs(t1) < 8.0f) {
+    const auto above = std::ranges::upper_bound(m_tauEdges, t1);
+    const float tolerance = 1e-4f * (1.0f + std::abs(t1));
+    const bool nearBelow =
+        above != m_tauEdges.begin() && t1 - *(above - 1) < tolerance;
+    const bool nearAbove = above != m_tauEdges.end() && *above - t1 < tolerance;
+    if (!nearBelow && !nearAbove) {
+      return m_binning.firstBin +
+             static_cast<std::uint32_t>(above - m_tauEdges.begin());
+    }
+  }
+
   const float eta = -std::log(fastHypot(1, t1) - t1);
 
   // signed: eta below the layer's range truncates negative, before the clamp

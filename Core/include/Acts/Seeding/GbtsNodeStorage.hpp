@@ -255,10 +255,6 @@ class GbtsNodeStorage final {
   void applyTauCuts(const StagedNode& staged,
                     detail::GbtsNodeParams& params) const;
 
-  /// Build the wrap-around aware phi indexing for every bin.
-  /// @param dphi Width of the phi margin duplicated at the wrap-around
-  void generatePhiIndexing(float dphi);
-
   Config m_cfg;
 
   std::shared_ptr<const GbtsGeometry> m_geometry;

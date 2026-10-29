@@ -26,9 +26,7 @@ GbtsNodeStorage::GbtsNodeStorage(const Config& config,
                                  GbtsTauLookupTable tauLut)
     : m_cfg(config),
       m_geometry(std::move(geometry)),
-      m_tauLut(std::move(tauLut)),
-      m_nodes(SpacePointColumns::CopiedFromIndex |
-              SpacePointColumns::PackedXYZR) {
+      m_tauLut(std::move(tauLut)) {
   m_etaBins.resize(m_geometry->numBins());
   m_stagedPerBin.resize(m_geometry->numBins());
 }
@@ -126,7 +124,8 @@ std::vector<std::uint32_t> GbtsNodeStorage::sortBinByPhi(
 void GbtsNodeStorage::finalize() {
   const auto nNodes = static_cast<std::uint32_t>(m_staged.size());
 
-  m_nodes.reserve(nNodes);
+  m_positions.reserve(nNodes);
+  m_spacePointIndex.reserve(nNodes);
   m_layers.reserve(nNodes);
 
   // Node order across all bins, used to fill the derived columns below.
@@ -136,7 +135,7 @@ void GbtsNodeStorage::finalize() {
   for (std::uint32_t bin = 0; bin < m_etaBins.size(); ++bin) {
     detail::GbtsEtaBinInfo& binInfo = m_etaBins[bin];
 
-    binInfo.nodes = {m_nodes.size(), m_nodes.size()};
+    binInfo.nodes = {numberOfNodes(), numberOfNodes()};
 
     const std::vector<std::uint32_t>& staged = m_stagedPerBin[bin];
     if (staged.empty()) {
@@ -151,9 +150,8 @@ void GbtsNodeStorage::finalize() {
     for (const std::uint32_t stagedIdx : sorted) {
       const StagedNode& node = m_staged[stagedIdx];
 
-      auto newNode = m_nodes.createSpacePoint();
-      newNode.copiedFromIndex() = node.spacePointIndex;
-      newNode.xyzr() = std::array<float, 4>{node.x, node.y, node.z, node.r};
+      m_positions.push_back({node.x, node.y, node.z, node.r});
+      m_spacePointIndex.push_back(node.spacePointIndex);
 
       m_layers.push_back(node.layer);
       nodeOrder.push_back(stagedIdx);
@@ -162,7 +160,7 @@ void GbtsNodeStorage::finalize() {
       maxRadius = std::max(maxRadius, node.r);
     }
 
-    binInfo.nodes.second = m_nodes.size();
+    binInfo.nodes.second = numberOfNodes();
     binInfo.minRadius = minRadius;
     binInfo.maxRadius = maxRadius;
     // every node in a bin is on the same layer, so any of them will do
@@ -173,12 +171,8 @@ void GbtsNodeStorage::finalize() {
     binInfo.technology = description.technology;
   }
 
-  // Created now that the container has its final size, so that each column is
-  // allocated in a single resize.
-  m_paramsColumn.emplace(
-      m_nodes.createColumn<detail::GbtsNodeParams>("gbtsNodeParams"));
-  m_edgeInfoColumn.emplace(
-      m_nodes.createColumn<detail::GbtsNodeEdgeInfo>("gbtsNodeEdgeInfo"));
+  m_params.resize(numberOfNodes());
+  m_edgeInfo.resize(numberOfNodes());
 
   // Reordered into node order, so that the pairs a bin reads sit together;
   // left empty when nothing carries one, which is what `hasStrips` reports.
@@ -188,7 +182,7 @@ void GbtsNodeStorage::finalize() {
     strips.reserve(m_strips.size());
   }
 
-  std::span<detail::GbtsNodeParams> params = m_paramsColumn->data();
+  std::span<detail::GbtsNodeParams> params = m_params;
   for (std::uint32_t node = 0; node < nodeOrder.size(); ++node) {
     const StagedNode& staged = m_staged[nodeOrder[node]];
 
@@ -259,7 +253,7 @@ void GbtsNodeStorage::applyTauCuts(const StagedNode& staged,
 }
 
 void GbtsNodeStorage::generatePhiIndexing(const float dphi) {
-  const std::span<const detail::GbtsNodeParams> params = m_paramsColumn->data();
+  const std::span<const detail::GbtsNodeParams> params = m_params;
 
   for (detail::GbtsEtaBinInfo& bin : m_etaBins) {
     if (bin.empty()) {

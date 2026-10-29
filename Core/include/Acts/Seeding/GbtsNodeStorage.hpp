@@ -16,6 +16,7 @@
 #include "Acts/Seeding/GbtsTauLookupTable.hpp"
 #include "Acts/Seeding/detail/GbtsGraphTypes.hpp"
 
+#include <array>
 #include <cassert>
 #include <cstdint>
 #include <memory>
@@ -33,8 +34,8 @@ class GbtsGraphBuilder;
 ///
 /// Nodes go in one at a time through `insert`, which takes plain scalars so
 /// that a caller can fill the storage from its own space point EDM. `finalize`
-/// then orders the nodes by (eta bin, phi) into a space point container, with
-/// the derived per-node data in dynamic columns on that container.
+/// then orders the nodes by (eta bin, phi), each with its position, the
+/// caller's index and the derived data in plain arrays indexed by node.
 class GbtsNodeStorage final {
   // Declared here so the public accessor can return it; defined privately
   // below.
@@ -44,8 +45,8 @@ class GbtsNodeStorage final {
   /// Maximum `Config::phiSortBuckets`; sizes the fixed bucket array.
   static constexpr std::uint32_t kMaxPhiSortBuckets = 31;
 
-  /// Filled storage is not relocatable: the column proxies point into the
-  /// space point container held by value.
+  /// Filled storage is not relocatable: the views it hands out point into
+  /// it.
   GbtsNodeStorage(const GbtsNodeStorage&) = delete;
   GbtsNodeStorage(GbtsNodeStorage&&) = delete;
   GbtsNodeStorage& operator=(const GbtsNodeStorage&) = delete;
@@ -124,13 +125,15 @@ class GbtsNodeStorage final {
 
   /// Get the total number of nodes
   /// @return Total number of nodes
-  std::uint32_t numberOfNodes() const { return m_nodes.size(); }
+  std::uint32_t numberOfNodes() const {
+    return static_cast<std::uint32_t>(m_positions.size());
+  }
 
   /// Map a node index back to the index the caller used when inserting it.
   /// @param node Node index
   /// @return The caller's space point index
   SpacePointIndex spacePointIndex(SpacePointIndex node) const {
-    return m_nodes.copiedFromIndexColumn()[node];
+    return m_spacePointIndex[node];
   }
 
   /// Whether any node carries a stereo pair, i.e. whether the graph has a
@@ -189,26 +192,23 @@ class GbtsNodeStorage final {
   /// Read-only view of the node positions and layers
   /// @return Node view
   detail::GbtsNodeView nodeView() const {
-    return detail::GbtsNodeView{m_nodes.xyzrColumn().data(), m_layers, m_strips,
-                                m_stripIndex};
+    return detail::GbtsNodeView{m_positions, m_layers, m_strips, m_stripIndex};
   }
 
   /// Per-node graph parameters, indexed by node index
   /// @return Span over the node parameters
   std::span<const detail::GbtsNodeParams> nodeParams() const {
-    return m_paramsColumn->data();
+    return m_params;
   }
 
   /// Per-node graph bookkeeping, indexed by node index
   /// @return Mutable span over the node edge info
-  std::span<detail::GbtsNodeEdgeInfo> nodeEdgeInfo() {
-    return m_edgeInfoColumn->data();
-  }
+  std::span<detail::GbtsNodeEdgeInfo> nodeEdgeInfo() { return m_edgeInfo; }
 
   /// Per-node graph bookkeeping, indexed by node index
   /// @return Span over the node edge info
   std::span<const detail::GbtsNodeEdgeInfo> nodeEdgeInfo() const {
-    return m_edgeInfoColumn->data();
+    return m_edgeInfo;
   }
 
   /// The stereo pair of a strip node, in the form the calibration reads.
@@ -265,14 +265,12 @@ class GbtsNodeStorage final {
 
   GbtsTauLookupTable m_tauLut;
 
-  /// Nodes ordered by (eta bin, phi). Carries the caller's index and the packed
-  /// (x, y, z, r) position, plus the derived data as dynamic columns.
-  SpacePointContainer m_nodes;
-
-  std::optional<MutableSpacePointColumnProxy<detail::GbtsNodeParams>>
-      m_paramsColumn;
-  std::optional<MutableSpacePointColumnProxy<detail::GbtsNodeEdgeInfo>>
-      m_edgeInfoColumn;
+  /// Per node, in node order, i.e. by (eta bin, phi): the packed (x, y, z, r)
+  /// position, the caller's index and the derived data.
+  std::vector<std::array<float, 4>> m_positions;
+  std::vector<SpacePointIndex> m_spacePointIndex;
+  std::vector<detail::GbtsNodeParams> m_params;
+  std::vector<detail::GbtsNodeEdgeInfo> m_edgeInfo;
 
   /// Dense layer index per node, in node order.
   std::vector<GbtsLayerIndex> m_layers;

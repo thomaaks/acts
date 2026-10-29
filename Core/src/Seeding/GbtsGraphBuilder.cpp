@@ -162,16 +162,16 @@ bool checkZ0BitMask(const GbtsGraphBuilder::Config& cfg,
             1) != 0;
   };
 
-  // the bin of z0 and either neighbour
+  // the bins of z0 -/+ its resolution; while the resolution is under half a
+  // bin, z0's own bin is one of the two
   const float dz = z0 - cfg.minZ0;
-  const auto bin = static_cast<std::int32_t>(z0HistoCoeff * dz);
   const auto binDown =
       static_cast<std::int32_t>(z0HistoCoeff * (dz - cfg.z0Resolution));
   const auto binUp =
       static_cast<std::int32_t>(z0HistoCoeff * (dz + cfg.z0Resolution));
 
-  return (static_cast<int>(isSet(bin)) | static_cast<int>(isSet(binDown)) |
-          static_cast<int>(isSet(binUp))) != 0;
+  return (static_cast<int>(isSet(binDown)) | static_cast<int>(isSet(binUp))) !=
+         0;
 }
 
 }  // namespace

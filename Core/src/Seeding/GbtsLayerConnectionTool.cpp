@@ -8,7 +8,6 @@
 
 #include "Acts/Seeding/GbtsLayerConnectionTool.hpp"
 
-#include <cmath>
 #include <stdexcept>
 
 namespace Acts::Experimental {
@@ -21,24 +20,17 @@ GbtsLayerConnectionTool::GbtsLayerConnectionTool(
   }
 
   // reserves
-  const auto pairReserve =
-      static_cast<std::uint32_t>(m_cfg.detectorGeometry.size());
-  m_layerPairs.reserve(pairReserve * (pairReserve - 1));
+  const auto n = static_cast<std::uint32_t>(m_cfg.detectorGeometry.size());
+  m_layerPairs.reserve(n * (n - 1));
 
   // create map linked pairs of GBTS ids with number of transitions between
   // layers
-  for (std::uint32_t i = 0; i < m_cfg.detectorGeometry.size(); i++) {
-    for (std::uint32_t j = 0; j < m_cfg.detectorGeometry.size(); j++) {
-      if (i == j) {
-        continue;
-      }
-
-      LayerIdPair pair;
-      pair.first = m_cfg.detectorGeometry[i].gbtsId;
-      pair.second = m_cfg.detectorGeometry[j].gbtsId;
-
+  for (const LayerDescription& src : m_cfg.detectorGeometry) {
+    for (const LayerDescription& dst : m_cfg.detectorGeometry) {
       // key = GBTS ids of pair, value = number of transitions
-      m_layerPairs.emplace(pair, 0);
+      if (&src != &dst) {
+        m_layerPairs.try_emplace(LayerIdPair{src.gbtsId, dst.gbtsId}, 0);
+      }
     }
   }
 }
@@ -52,16 +44,13 @@ void GbtsLayerConnectionTool::addTrack(
 
   // update map with track layer transitions
   for (std::uint32_t id = 0; id + 1 < track.size(); id++) {
-    const GbtsExperimentLayerId index1 = track[id];
-    const GbtsExperimentLayerId index2 = track[id + 1];
-
-    if (index1 == index2) {
+    if (track[id] == track[id + 1]) {
       ACTS_WARNING("Track transitions between same layer, skipping");
 
       continue;
     }
 
-    m_layerPairs[{index1, index2}] += 1;
+    m_layerPairs[{track[id], track[id + 1]}] += 1;
   }
 
   m_totalTracks++;
@@ -76,33 +65,23 @@ GbtsLayerConnectionTool::createConnectionTable() const {
 
   // obtain total incoming transitions for each src layer (used as denominator
   // of probability)
-  std::vector<std::uint32_t> srcTotals;
-  srcTotals.resize(m_cfg.detectorGeometry.size(), 0);
+  std::vector<std::uint32_t> srcTotals(m_cfg.detectorGeometry.size(), 0);
 
   for (const auto& [layerPair, nTransitions] : m_layerPairs) {
-    std::uint32_t layerIndex = getIndexByGbtsId(layerPair.first);
-    srcTotals[layerIndex] += nTransitions;
+    srcTotals[getIndexByGbtsId(layerPair.first)] += nTransitions;
   }
 
   // find transitions that pass probability cut and add to temp container
   LayerIdPairs tempPairs;
   for (const auto& [layerPair, nTransitions] : m_layerPairs) {
-    const std::uint32_t srcIndex = getIndexByGbtsId(layerPair.first);
+    const std::uint32_t srcTotal = srcTotals[getIndexByGbtsId(layerPair.first)];
 
-    float probability{};
+    // avoid NAN error with 0/0
+    const float probability =
+        srcTotal == 0 ? 0.f : static_cast<float>(nTransitions) / srcTotal;
 
-    if (srcTotals[srcIndex] == 0) {
-      // avoid NAN error with 0/0
-      probability = 0;
-    } else {
-      probability = static_cast<float>(nTransitions) / srcTotals[srcIndex];
-    }
-
-    const bool passCut = (m_cfg.probThreshold == -1)
-                             ? (probability != 0)
-                             : (probability >= m_cfg.probThreshold);
-
-    if (passCut) {
+    if (m_cfg.probThreshold == -1 ? probability != 0
+                                  : probability >= m_cfg.probThreshold) {
       tempPairs.emplace(layerPair.first, layerPair.second);
     }
   }
@@ -118,14 +97,8 @@ GbtsLayerConnectionTool::createConnectionTable() const {
         ACTS_WARNING("Cannot find oppisite side layer, skipping");
         continue;
       }
-      // search set to see if swapped pair has already been added
-      const bool notAdded =
-          (tempPairs.count({srcSwappedId.value(), dstSwappedId.value()}) == 0);
-
-      // if not already added, add to output file
-      if (notAdded) {
-        tempPairs.emplace(srcSwappedId.value(), dstSwappedId.value());
-      }
+      // a pair already there is left as it is
+      tempPairs.emplace(srcSwappedId.value(), dstSwappedId.value());
     }
   }
 
@@ -145,24 +118,12 @@ std::uint32_t GbtsLayerConnectionTool::getIndexByGbtsId(
 
 std::optional<GbtsExperimentLayerId> GbtsLayerConnectionTool::oppositeSideLayer(
     GbtsExperimentLayerId layerId) const {
-  const std::uint32_t layerIndex = getIndexByGbtsId(layerId);
-
-  const auto& layer = m_cfg.detectorGeometry[layerIndex];
-
-  bool switchedMinZ{};
-  bool switchedMaxZ{};
-
-  bool sameMaxR{};
-  bool sameMinR{};
+  const auto& layer = m_cfg.detectorGeometry[getIndexByGbtsId(layerId)];
 
   for (const auto& switchedLayer : m_cfg.detectorGeometry) {
-    switchedMinZ = (switchedLayer.minZ == -layer.maxZ);
-    switchedMaxZ = (switchedLayer.maxZ == -layer.minZ);
-
-    sameMaxR = (switchedLayer.maxR == layer.maxR);
-    sameMinR = (switchedLayer.minR == layer.minR);
-
-    if (switchedMinZ && switchedMaxZ && sameMaxR && sameMinR) {
+    if (switchedLayer.minZ == -layer.maxZ &&
+        switchedLayer.maxZ == -layer.minZ &&
+        switchedLayer.maxR == layer.maxR && switchedLayer.minR == layer.minR) {
       return switchedLayer.gbtsId;
     }
   }

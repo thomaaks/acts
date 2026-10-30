@@ -12,21 +12,17 @@
 #include "Acts/EventData/SeedContainer.hpp"
 #include "Acts/EventData/SpacePointContainer.hpp"
 #include "Acts/Seeding/GbtsGeometry.hpp"
-#include "Acts/Seeding/GbtsLayerDescription.hpp"
 #include "Acts/Seeding/GbtsNodeStorage.hpp"
 #include "Acts/Seeding/GbtsRoiDescriptor.hpp"
 #include "Acts/Seeding/GbtsSeedFit.hpp"
 #include "Acts/Seeding/GbtsTauLookupTable.hpp"
 #include "Acts/Seeding/GbtsTrackingFilter.hpp"
-#include "Acts/Seeding/detail/GbtsGraphTypes.hpp"
 #include "Acts/Utilities/Logger.hpp"
 
-#include <array>
 #include <cstdint>
 #include <limits>
 #include <memory>
 #include <optional>
-#include <utility>
 #include <vector>
 
 namespace Acts::Experimental {
@@ -160,21 +156,8 @@ class GraphBasedTrackSeeder {
  private:
   /// candidate seed metadata produced by the GBTS algorithm.
   struct SeedCandidateProperties {
-    /// @param quality Seed quality score
-    /// @param clone Whether the candidate was rejected as a clone
-    /// @param sps Vector of graph node indices
-    /// @param splitFlag used to flag if seed needs to be split in two
-    SeedCandidateProperties(float quality, bool clone,
-                            std::vector<SpacePointIndex> sps, bool splitFlag)
-        : seedQuality(quality),
-          isClone(clone),
-          nodes(std::move(sps)),
-          forSeedSplitting(splitFlag) {}
-
     /// Seed quality score.
     float seedQuality{};
-    /// Clone flag.
-    bool isClone{};
     /// Graph node indices.
     std::vector<SpacePointIndex> nodes;
     /// Flag for seed splitting.
@@ -183,41 +166,24 @@ class GraphBasedTrackSeeder {
     std::optional<GbtsSeedFit> fit;
   };
 
-  /// Output seed metadata
-  struct OutputSeedProperties {
-    /// @param quality Seed quality score
-    /// @param sps Vector of space point indices in the seed
-    OutputSeedProperties(float quality, std::vector<std::uint32_t> sps)
-        : seedQuality(quality), spacePoints(std::move(sps)) {}
-
-    /// Quality of seed.
-    float seedQuality{};
-    /// Index of spacepoints in seed.
-    std::vector<std::uint32_t> spacePoints;
-    /// Fit of the tracking filter.
-    std::optional<GbtsSeedFit> fit;
-  };
-
   DerivedConfig m_cfg;
 
   std::shared_ptr<const GbtsGeometry> m_geometry;
 
-  std::unique_ptr<const Acts::Logger> m_logger =
-      Acts::getDefaultLogger("Finder", Acts::Logging::Level::INFO);
+  std::unique_ptr<const Acts::Logger> m_logger;
 
   const Acts::Logger& logger() const { return *m_logger; }
 
   /// Extract seed candidates from the graph.
   /// @param nodeStorage Storage containing the graph nodes
   /// @param graph The graph
-  /// @param vOutputSeeds Output vector for seed candidates
+  /// @param outputSeeds Container the seeds are added to
   /// @param filter Tracking filter to be applied
-  /// @param withFits Whether the fit of the filter to each seed is kept
-  void extractSeedsFromTheGraph(const GbtsNodeStorage& nodeStorage,
-                                const GbtsGraph& graph,
-                                std::vector<OutputSeedProperties>& vOutputSeeds,
-                                const GbtsTrackingFilter& filter,
-                                bool withFits) const;
+  /// @param outputFits Fit of the filter to each seed added, if not null
+  void extractSeedsFromTheGraph(
+      const GbtsNodeStorage& nodeStorage, const GbtsGraph& graph,
+      SeedContainer& outputSeeds, const GbtsTrackingFilter& filter,
+      std::vector<std::optional<GbtsSeedFit>>* outputFits) const;
 
   /// Extract the best fitted path from every edge inwards to a root edge.
   /// @param nodeView View of the node positions and layers
@@ -227,13 +193,6 @@ class GraphBasedTrackSeeder {
   std::vector<detail::GbtsEdgeState> extractBestPathPerEdge(
       const detail::GbtsNodeView& nodeView, const GbtsGraph& graph,
       const GbtsTrackingFilter& filter) const;
-
-  /// Estimate the inverse radius of the circle through three nodes.
-  /// @param nodeView View of the node positions and layers
-  /// @param nodes The three graph nodes, innermost first
-  /// @return The estimated inverse radius
-  float estimateCurvature(const detail::GbtsNodeView& nodeView,
-                          const std::array<SpacePointIndex, 3>& nodes) const;
 };
 
 }  // namespace Acts::Experimental

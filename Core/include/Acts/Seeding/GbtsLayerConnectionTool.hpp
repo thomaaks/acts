@@ -59,10 +59,8 @@ class GbtsLayerConnectionTool {
     /// @param pair Layer transition pair
     /// @return hash id
     std::size_t operator()(const LayerIdPair& pair) const noexcept {
-      const auto h1 = std::hash<GbtsExperimentLayerId>{}(pair.first);
-      const auto h2 = std::hash<GbtsExperimentLayerId>{}(pair.second);
-
-      return h1 ^ (h2 << 1);
+      return std::hash<GbtsExperimentLayerId>{}(pair.first) ^
+             (std::hash<GbtsExperimentLayerId>{}(pair.second) << 1);
     }
   };
 

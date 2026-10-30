@@ -11,11 +11,11 @@
 #include "Acts/EventData/StripSpacePointCalibrationDetails.hpp"
 #include "Acts/EventData/Types.hpp"
 #include "Acts/Seeding/GbtsLayerDescription.hpp"
-#include "Acts/Seeding/GbtsTauLookupTable.hpp"
 
 #include <array>
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <span>
 #include <utility>
 #include <vector>
@@ -77,13 +77,14 @@ struct GbtsEtaBinInfo final {
   /// by +-2pi at the wrap-around so the phi sliding window never has to wrap.
   std::vector<std::pair<float, SpacePointIndex>> phiNodes;
 
-  float minRadius{};
-  float maxRadius{};
+  /// Radial and z extent of the bin's nodes, empty until a node widens it.
+  float minRadius{std::numeric_limits<float>::max()};
+  float maxRadius{std::numeric_limits<float>::lowest()};
+  float minZ{std::numeric_limits<float>::max()};
+  float maxZ{std::numeric_limits<float>::lowest()};
   /// Inside-out pixel barrel ordinal of the bin's layer, -1 for the rest.
   std::int32_t barrelOrder{-1};
 
-  /// Type of the layer this bin belongs to.
-  GbtsLayerType type{};
   /// Technology of the layer this bin belongs to.
   GbtsLayerTechnology technology{};
 
@@ -93,8 +94,6 @@ struct GbtsEtaBinInfo final {
 };
 //! [gbts eta bin info]
 
-class GbtsNodeProxy;
-
 /// What a node's entry in `GbtsNodeView::stripIndex` holds when it carries no
 /// stereo pair, i.e. when it is a pixel node.
 constexpr std::uint32_t kNoStrip = std::numeric_limits<std::uint32_t>::max();
@@ -102,7 +101,7 @@ constexpr std::uint32_t kNoStrip = std::numeric_limits<std::uint32_t>::max();
 /// Read-only view of the node attributes needed outside the graph builder.
 ///
 /// Positions are packed as (x, y, z, r) because every consumer reads them
-/// together. Index it to get a GbtsNodeProxy with named accessors.
+/// together, by node index.
 struct GbtsNodeView final {
   /// Packed (x, y, z, r) per node.
   std::span<const std::array<float, 4>> positions;
@@ -113,11 +112,6 @@ struct GbtsNodeView final {
   /// Index into `strips` per node, `kNoStrip` where a node carries none.
   /// Empty when nothing does.
   std::span<const std::uint32_t> stripIndex;
-
-  /// Handle on a single node.
-  /// @param index Index of the node
-  /// @return Proxy for the node
-  GbtsNodeProxy operator[](SpacePointIndex index) const;
 
   /// The stereo pair a node was formed from.
   /// @param index Index of the node
@@ -131,48 +125,49 @@ struct GbtsNodeView final {
   }
 };
 
-/// Read-only handle on a single graph node.
-///
-/// Cheap to copy and meant to be created at the point of use. The view it
-/// refers to has to outlive it.
-class GbtsNodeProxy final {
- public:
-  /// @param view View of the node positions and layers
-  /// @param index Index of the node
-  GbtsNodeProxy(const GbtsNodeView& view, SpacePointIndex index)
-      : m_view(&view), m_index(index) {}
+/// The circle through three nodes, mapped conformally about one of them to the
+/// line v = A u + B through the other two. Its curvature is
+/// B / sqrt(1 + A * A).
+/// @param view View of the node positions
+/// @param center The node the mapping is centred on
+/// @param others The other two nodes
+/// @return A and B, or nothing where the two nodes map to the same u
+inline std::optional<std::array<float, 2>> conformalLine(
+    const GbtsNodeView& view, const SpacePointIndex center,
+    const std::array<SpacePointIndex, 2>& others) {
+  // (x, y, z, r)
+  const std::array<float, 4>& n0 = view.positions[center];
 
-  /// @return Index of the node
-  SpacePointIndex index() const { return m_index; }
-  /// @return Global x coordinate
-  float x() const { return position()[0]; }
-  /// @return Global y coordinate
-  float y() const { return position()[1]; }
-  /// @return Global z coordinate
-  float z() const { return position()[2]; }
-  /// @return Transverse distance from the beamline
-  float r() const { return position()[3]; }
-  /// @return Dense layer index
-  GbtsLayerIndex layer() const { return m_view->layers[m_index]; }
+  const float x0 = n0[0];
+  const float y0 = n0[1];
+  const float cosA = x0 / n0[3];
+  const float sinA = y0 / n0[3];
 
- private:
-  const std::array<float, 4>& position() const {
-    return m_view->positions[m_index];
+  std::array<float, 2> u{};
+  std::array<float, 2> v{};
+  for (std::uint32_t k = 0; k < 2; k++) {
+    const std::array<float, 4>& nk = view.positions[others[k]];
+
+    const float dx = nk[0] - x0;
+    const float dy = nk[1] - y0;
+    const float r2Inv = 1.0f / (dx * dx + dy * dy);
+
+    u[k] = (dx * cosA + dy * sinA) * r2Inv;
+    v[k] = (-dx * sinA + dy * cosA) * r2Inv;
   }
 
-  const GbtsNodeView* m_view{};
-  SpacePointIndex m_index{kSpacePointIndexInvalid};
-};
+  const float du = u[0] - u[1];
+  if (du == 0.0) {
+    return std::nullopt;
+  }
 
-inline GbtsNodeProxy GbtsNodeView::operator[](SpacePointIndex index) const {
-  return GbtsNodeProxy(*this, index);
+  const float A = (v[0] - v[1]) / du;
+  return std::array<float, 2>{A, v[1] - A * u[1]};
 }
 
 //! [gbts edge]
 /// Edge between two GBTS nodes with fit parameters.
 struct GbtsEdge final {
-  GbtsEdge() = default;
-
   /// Constructor
   /// @param n1_ Inner node index
   /// @param n2_ Outer node index

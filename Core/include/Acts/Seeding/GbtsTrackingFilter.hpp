@@ -14,12 +14,10 @@
 
 #include <array>
 #include <memory>
-#include <vector>
 
 namespace Acts::Experimental {
 
 class GbtsGeometry;
-class GraphBasedTrackSeeder;
 
 /// Tracking filter operating on the GBTS edge graph.
 class GbtsTrackingFilter final {

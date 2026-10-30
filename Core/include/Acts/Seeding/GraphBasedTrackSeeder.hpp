@@ -185,11 +185,12 @@ class GraphBasedTrackSeeder {
       SeedContainer& outputSeeds, const GbtsTrackingFilter& filter,
       std::vector<std::optional<GbtsSeedFit>>* outputFits) const;
 
-  /// A fitted path: the filter's state at its end, and its edges, the head
-  /// edge first.
+  /// A fitted path: the filter's state at its end, its head edge, and its
+  /// nodes, the innermost first.
   struct FittedPath {
     detail::GbtsEdgeState state;
-    std::vector<std::uint32_t> edges;
+    std::uint32_t head{};
+    std::vector<SpacePointIndex> nodes;
   };
 
   /// Extract the best fitted path from every edge inwards to a root edge.

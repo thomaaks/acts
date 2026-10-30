@@ -19,6 +19,7 @@
 #include <limits>
 #include <memory>
 #include <numbers>
+#include <numeric>
 #include <span>
 #include <stdexcept>
 #include <utility>
@@ -110,19 +111,16 @@ void GraphBasedTrackSeeder::extractSeedsFromTheGraph(
   std::vector<SeedCandidateProperties> vSeedCandidates;
 
   // Turn the fitted path of every head edge into a seed candidate.
-  for (const detail::GbtsEdgeState& rs :
+  for (const auto& [rs, edges] :
        extractBestPathPerEdge(nodeView, graph, filter)) {
-    const detail::GbtsEdge& head = *rs.vs.front();
+    const detail::GbtsEdge& head = graph.edgeStorage[edges.front()];
     const float seedAbsEta = std::abs(-std::log(head.p[0]));
 
     std::vector<SpacePointIndex> vN;
-
-    for (auto sIt = rs.vs.rbegin(); sIt != rs.vs.rend(); ++sIt) {
-      if (sIt == rs.vs.rbegin()) {
-        vN.push_back((*sIt)->n1);
-      }
-
-      vN.push_back((*sIt)->n2);
+    vN.reserve(edges.size() + 1);
+    vN.push_back(graph.edgeStorage[edges.back()].n1);
+    for (auto it = edges.rbegin(); it != edges.rend(); ++it) {
+      vN.push_back(graph.edgeStorage[*it].n2);
     }
 
     // a triplet is accepted if it makes it up to this point
@@ -187,8 +185,11 @@ void GraphBasedTrackSeeder::extractSeedsFromTheGraph(
   // clone removal code goes below ...
 
   // best first, and in the order found where equal
-  std::ranges::stable_sort(vSeedCandidates, {},
-                           &SeedCandidateProperties::seedQuality);
+  std::vector<std::uint32_t> order(vSeedCandidates.size());
+  std::iota(order.begin(), order.end(), 0);
+  std::ranges::stable_sort(order, {}, [&](const std::uint32_t i) {
+    return vSeedCandidates[i].seedQuality;
+  });
 
   // whether a better candidate took each hit, indexed by graph node index
   std::vector<std::uint32_t> h2t(nodeStorage.numberOfNodes(), 0);
@@ -199,7 +200,8 @@ void GraphBasedTrackSeeder::extractSeedsFromTheGraph(
   // The candidates best first, so each hit goes to the first to take it, and
   // whether one shares too many hits with better ones is known as it comes.
   // The clones dropped, and split seeds split if need be.
-  for (const auto& seed : vSeedCandidates) {
+  for (const std::uint32_t i : order) {
+    const SeedCandidateProperties& seed = vSeedCandidates[i];
     // the hits taken by a better candidate
     const auto nOther = std::ranges::count_if(
         seed.nodes, [&](const SpacePointIndex node) { return h2t[node] != 0; });
@@ -239,7 +241,7 @@ void GraphBasedTrackSeeder::extractSeedsFromTheGraph(
   }
 }
 
-std::vector<detail::GbtsEdgeState>
+std::vector<GraphBasedTrackSeeder::FittedPath>
 GraphBasedTrackSeeder::extractBestPathPerEdge(
     const detail::GbtsNodeView& nodeView, const GbtsGraph& graph,
     const GbtsTrackingFilter& filter) const {
@@ -312,7 +314,7 @@ GraphBasedTrackSeeder::extractBestPathPerEdge(
   // From every edge, search all paths inwards to a root, fitting on the way.
   // The complete path with the best score per space point is the candidate
   // of the edge.
-  std::vector<detail::GbtsEdgeState> candidates;
+  std::vector<FittedPath> candidates;
   std::uint32_t minLength = 0;
   std::vector<std::uint32_t> path;
   std::vector<std::uint32_t> bestPath;
@@ -379,11 +381,7 @@ GraphBasedTrackSeeder::extractBestPathPerEdge(
       return;
     }
 
-    bestState.vs.clear();
-    for (const std::uint32_t e : bestPath) {
-      bestState.vs.push_back(&edgeStorage[e]);
-    }
-    candidates.push_back(bestState);
+    candidates.push_back({bestState, bestPath});
   });
 
   return candidates;

@@ -11,15 +11,11 @@
 #include "Acts/Seeding/detail/GbtsGraphTypes.hpp"
 
 #include <array>
-#include <cstdint>
 
 namespace Acts::Experimental::detail {
 
 /// Per-edge tracking state used by the GBTS filter.
 struct GbtsEdgeState final {
- public:
-  GbtsEdgeState() = default;
-
   /// Initialize from edge
   /// @param pS Edge to initialize from
   /// @param nodeView View of the node positions and layers

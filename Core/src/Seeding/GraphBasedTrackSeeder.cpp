@@ -20,7 +20,6 @@
 #include <memory>
 #include <numbers>
 #include <numeric>
-#include <span>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -111,17 +110,8 @@ void GraphBasedTrackSeeder::extractSeedsFromTheGraph(
   std::vector<SeedCandidateProperties> vSeedCandidates;
 
   // Turn the fitted path of every head edge into a seed candidate.
-  for (const auto& [rs, edges] :
-       extractBestPathPerEdge(nodeView, graph, filter)) {
-    const detail::GbtsEdge& head = graph.edgeStorage[edges.front()];
-    const float seedAbsEta = std::abs(-std::log(head.p[0]));
-
-    std::vector<SpacePointIndex> vN;
-    vN.reserve(edges.size() + 1);
-    vN.push_back(graph.edgeStorage[edges.back()].n1);
-    for (auto it = edges.rbegin(); it != edges.rend(); ++it) {
-      vN.push_back(graph.edgeStorage[*it].n2);
-    }
+  for (auto& [rs, head, vN] : extractBestPathPerEdge(nodeView, graph, filter)) {
+    const float seedAbsEta = std::abs(-std::log(graph.edgeStorage[head].p[0]));
 
     // a triplet is accepted if it makes it up to this point
     if (vN.size() < 3) {
@@ -129,8 +119,6 @@ void GraphBasedTrackSeeder::extractSeedsFromTheGraph(
     }
 
     const auto origSeedSize = static_cast<std::uint32_t>(vN.size());
-
-    const float origSeedQuality = -rs.j / origSeedSize;
 
     bool seedSplitFlag = (seedAbsEta < m_cfg.maxSeedSplitEta) &&
                          (origSeedSize >= m_cfg.minSplitSeedSize) &&
@@ -167,7 +155,7 @@ void GraphBasedTrackSeeder::extractSeedsFromTheGraph(
     }
 
     vSeedCandidates.push_back(
-        {origSeedQuality, std::move(vN), seedSplitFlag, std::nullopt});
+        {-rs.j / origSeedSize, std::move(vN), seedSplitFlag, std::nullopt});
 
     if (outputFits != nullptr) {
       // filter state at the innermost node, x' along the first edge (inwards)
@@ -230,14 +218,12 @@ void GraphBasedTrackSeeder::extractSeedsFromTheGraph(
       }
     };
 
-    if (!seed.forSeedSplitting) {
-      addSeed(seed.nodes.size());
-      continue;
+    // whole, or a split seed as "drop-out" seeds: the first and the middle
+    // dropped
+    addSeed(seed.forSeedSplitting ? 0 : seed.nodes.size());
+    if (seed.forSeedSplitting) {
+      addSeed(seed.nodes.size() / 2);
     }
-
-    // a split seed as "drop-out" seeds: the first and the middle dropped
-    addSeed(0);
-    addSeed(seed.nodes.size() / 2);
   }
 }
 
@@ -252,17 +238,16 @@ GraphBasedTrackSeeder::extractBestPathPerEdge(
   // The edges that hold a neighbour, in order or backwards. Any other edge
   // ends every chain it is in, so it settles nothing below and heads no path
   // of more than one edge, which makes no seed.
-  const std::vector<std::uint64_t>& linked = graph.linked;
   const auto forEachLinked = [&](const auto& f) {
-    for (std::size_t w = 0; w < linked.size(); ++w) {
-      for (std::uint64_t bits = linked[w]; bits != 0; bits &= bits - 1) {
+    for (std::size_t w = 0; w < graph.linked.size(); ++w) {
+      for (std::uint64_t bits = graph.linked[w]; bits != 0; bits &= bits - 1) {
         f(static_cast<std::uint32_t>(w * 64 + std::countr_zero(bits)));
       }
     }
   };
   const auto forEachLinkedBackwards = [&](const auto& f) {
-    for (std::size_t w = linked.size(); w-- > 0;) {
-      for (std::uint64_t bits = linked[w]; bits != 0;) {
+    for (std::size_t w = graph.linked.size(); w-- > 0;) {
+      for (std::uint64_t bits = graph.linked[w]; bits != 0;) {
         const int b = 63 - std::countl_zero(bits);
         bits &= ~(std::uint64_t{1} << b);
         f(static_cast<std::uint32_t>(w * 64 + b));
@@ -297,15 +282,12 @@ GraphBasedTrackSeeder::extractBestPathPerEdge(
     }
     // A root has no settled edge further in exactly one level up: an edge
     // further in with a longer chain outwards elsewhere does not end the chain
-    const std::uint32_t nextLevel = level[e] + 1;
     std::uint32_t length = 1;
-    if (nextLevel <= maxLength) {
-      const detail::GbtsEdge& edge = edgeStorage[e];
-      for (std::uint32_t k = 0; k < edge.nNei; ++k) {
-        const std::uint32_t inner = edge.vNei[k];
-        if (level[inner] == nextLevel) {
-          length = std::max(length, edgesToRoot[inner] + 1);
-        }
+    const detail::GbtsEdge& edge = edgeStorage[e];
+    for (std::uint32_t k = 0; k < edge.nNei; ++k) {
+      const std::uint32_t inner = edge.vNei[k];
+      if (level[inner] == level[e] + 1) {
+        length = std::max(length, edgesToRoot[inner] + 1);
       }
     }
     edgesToRoot[e] = length;
@@ -330,7 +312,7 @@ GraphBasedTrackSeeder::extractBestPathPerEdge(
     if (edgesToRoot[e] == 1) {
       // a root completes the chain
       const float quality = -state.j / static_cast<float>(path.size() + 1);
-      if (path.size() >= minLength && quality < bestQuality) {
+      if (quality < bestQuality) {
         bestQuality = quality;
         bestState = state;
         bestPath = path;
@@ -377,11 +359,15 @@ GraphBasedTrackSeeder::extractBestPathPerEdge(
     bestQuality = std::numeric_limits<float>::max();
     bestPath.clear();
     search(search, head, state);
-    if (bestPath.empty()) {
-      return;
+    if (!bestPath.empty()) {
+      std::vector<SpacePointIndex> nodes;
+      nodes.reserve(bestPath.size() + 1);
+      nodes.push_back(edgeStorage[bestPath.back()].n1);
+      for (auto it = bestPath.rbegin(); it != bestPath.rend(); ++it) {
+        nodes.push_back(edgeStorage[*it].n2);
+      }
+      candidates.push_back({bestState, head, std::move(nodes)});
     }
-
-    candidates.push_back({bestState, bestPath});
   });
 
   return candidates;

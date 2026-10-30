@@ -362,10 +362,8 @@ GbtsGraph GbtsGraphBuilder::buildTheGraph(const GbtsRoiDescriptor& roi,
 
       // the intermediate loop over sliding windows
       for (auto& slw : phiSlidingWindow) {
-        const std::int32_t barrelOrder2 = slw.barrelOrder;
-
         const bool isPixel2 = slw.technology == GbtsLayerTechnology::Pixel;
-        const bool isPixelBarrel2 = barrelOrder2 >= 0;
+        const bool isPixelBarrel2 = slw.barrelOrder >= 0;
 
         const bool stripPair = calibrate && (!isPixel1 || !isPixel2);
 
@@ -450,8 +448,6 @@ GbtsGraph GbtsGraphBuilder::buildTheGraph(const GbtsRoiDescriptor& roi,
 
           const detail::GbtsNodeEdgeInfo& n2Info = edgeInfo[n2Idx];
 
-          const std::uint16_t nodeInfo = n2Info.isConnected;
-
           const std::uint32_t n2FirstEdge = n2Info.firstEdge;
           const std::uint16_t n2NumEdges = n2Info.numEdges;
           const std::uint32_t n2LastEdge = n2FirstEdge + n2NumEdges;
@@ -473,29 +469,23 @@ GbtsGraph GbtsGraphBuilder::buildTheGraph(const GbtsRoiDescriptor& roi,
           } else {
             // skip isolated nodes as their incoming edges lead to nowhere;
             // the cuts above left out the others' already
-            if (useZ0Histogram && (nodeInfo == 0)) {
+            if (useZ0Histogram && (n2Info.isConnected == 0)) {
               continue;
             }
 
             const detail::GbtsNodeParams& n2pars = params[n2Idx];
 
-            const float r2 = n2pars.r;
-
-            float dr = r2 - r1;
-
             // On the nominal radii, so an endcap pair the slide would have
             // opened up is lost here. The cheap reject is worth more.
-            if (dr < m_cfg.minDeltaRadius) {
+            if (n2pars.r - r1 < m_cfg.minDeltaRadius) {
               continue;
             }
-
-            const float z2 = n2pars.z;
 
             // Azimuth is kept as it was -- exactly right in the barrel, and to
             // the stereo angle in the endcap, where the strip slid along is a
             // hair off radial.
-            r2c = r2;
-            float z2c = z2;
+            r2c = n2pars.r;
+            float z2c = n2pars.z;
 
             // A circle's chord bisects the tangent directions, so turning the
             // chord by the pair's own azimuth difference gives each tangent.
@@ -503,23 +493,19 @@ GbtsGraph GbtsGraphBuilder::buildTheGraph(const GbtsRoiDescriptor& roi,
             const std::array<float, 4>& p2 = nodeView.positions[n2Idx];
             const float dx = p2[0] - p1[0];
             const float dy = p2[1] - p1[1];
-            const float dzc = z2 - z1;
+            const float dzc = n2pars.z - z1;
             const float turn = phi2 - phi1;
 
-            bool resolved = true;
-            if (!isPixel1) {
-              resolved = calibrateNode(
-                  n1Idx, {dx + dy * turn, dy - dx * turn, dzc}, r1c, z1c);
-            }
-            if (resolved && !isPixel2) {
-              resolved = calibrateNode(
-                  n2Idx, {dx - dy * turn, dy + dx * turn, dzc}, r2c, z2c);
-            }
-            if (!resolved) {
+            if ((!isPixel1 &&
+                 !calibrateNode(n1Idx, {dx + dy * turn, dy - dx * turn, dzc},
+                                r1c, z1c)) ||
+                (!isPixel2 &&
+                 !calibrateNode(n2Idx, {dx - dy * turn, dy + dx * turn, dzc},
+                                r2c, z2c))) {
               continue;
             }
 
-            dr = r2c - r1c;
+            const float dr = r2c - r1c;
             if (dr < m_cfg.minDeltaRadius) {
               continue;
             }
@@ -542,7 +528,7 @@ GbtsGraph GbtsGraphBuilder::buildTheGraph(const GbtsRoiDescriptor& roi,
             // branch, as above.
             const bool inZ0Histogram =
                 !useZ0Histogram ||
-                checkZ0BitMask(m_cfg, nodeInfo, z0s, z0HistoCoeff);
+                checkZ0BitMask(m_cfg, n2Info.isConnected, z0s, z0HistoCoeff);
 
             const float zOuter = z0s + m_cfg.maxOuterRadius * tau;
             const bool inRZ = !m_cfg.doubletFilterRZ ||
@@ -616,8 +602,6 @@ GbtsGraph GbtsGraphBuilder::buildTheGraph(const GbtsRoiDescriptor& roi,
                 continue;  // bad match
               }
 
-              const bool isPixelBarrel3 = pS->n2PixelBarrel;
-
               float dPhi = phi2u - pS->p[2];
 
               if (dPhi < -std::numbers::pi_v<float>) {
@@ -639,7 +623,7 @@ GbtsGraph GbtsGraphBuilder::buildTheGraph(const GbtsRoiDescriptor& roi,
 
               // final check: cuts on pT and d0
               if (m_cfg.validateTriplets && isPixelBarrel1 && isPixelBarrel2 &&
-                  isPixelBarrel3) {
+                  pS->n2PixelBarrel) {
                 const std::array<SpacePointIndex, 3> candidateTriplet = {
                     n1Idx, n2Idx, pS->n2};
 

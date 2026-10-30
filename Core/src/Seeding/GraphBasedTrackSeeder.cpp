@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cassert>
 #include <cmath>
 #include <cstdint>
@@ -246,27 +247,51 @@ GraphBasedTrackSeeder::extractBestPathPerEdge(
   const auto nEdges = static_cast<std::uint32_t>(edgeStorage.size());
   const auto maxLength = static_cast<std::uint32_t>(m_cfg.maxChainLength);
 
+  // The edges that hold a neighbour, in order or backwards. Any other edge
+  // ends every chain it is in, so it settles nothing below and heads no path
+  // of more than one edge, which makes no seed.
+  const std::vector<std::uint64_t>& linked = graph.linked;
+  const auto forEachLinked = [&](const auto& f) {
+    for (std::size_t w = 0; w < linked.size(); ++w) {
+      for (std::uint64_t bits = linked[w]; bits != 0; bits &= bits - 1) {
+        f(static_cast<std::uint32_t>(w * 64 + std::countr_zero(bits)));
+      }
+    }
+  };
+  const auto forEachLinkedBackwards = [&](const auto& f) {
+    for (std::size_t w = linked.size(); w-- > 0;) {
+      for (std::uint64_t bits = linked[w]; bits != 0;) {
+        const int b = 63 - std::countl_zero(bits);
+        bits &= ~(std::uint64_t{1} << b);
+        f(static_cast<std::uint32_t>(w * 64 + b));
+      }
+    }
+  };
+
   // The level of an edge is the length of the longest chain of edges going
   // outwards from it. `vNei` only holds edges further in, which are created
   // later, so one pass in edge order settles it. Edges in chains longer than
   // `maxLength` stay above it and are left out.
   std::vector<std::uint32_t> level(nEdges, 1);
-  for (std::uint32_t e = 0; e < nEdges; ++e) {
+  forEachLinked([&](const std::uint32_t e) {
     const detail::GbtsEdge& edge = edgeStorage[e];
     const std::uint32_t next = std::min(level[e] + 1, maxLength + 1);
     for (std::uint32_t k = 0; k < edge.nNei; ++k) {
       std::uint32_t& innerLevel = level[edge.vNei[k]];
       innerLevel = std::max(innerLevel, next);
     }
-  }
+  });
 
   // The most edges on a chain from an edge inwards to a root, the edge
   // included, stepping one level up at a time; zero for an edge left out.
   // The edges further in come later, so one pass backwards settles it.
-  std::vector<std::uint32_t> edgesToRoot(nEdges, 0);
-  for (std::uint32_t e = nEdges; e-- > 0;) {
+  std::vector<std::uint32_t> edgesToRoot(nEdges);
+  for (std::uint32_t e = 0; e < nEdges; ++e) {
+    edgesToRoot[e] = level[e] <= maxLength ? 1 : 0;
+  }
+  forEachLinkedBackwards([&](const std::uint32_t e) {
     if (level[e] > maxLength) {
-      continue;
+      return;
     }
     // A root has no settled edge further in exactly one level up: an edge
     // further in with a longer chain outwards elsewhere does not end the chain
@@ -282,7 +307,7 @@ GraphBasedTrackSeeder::extractBestPathPerEdge(
       }
     }
     edgesToRoot[e] = length;
-  }
+  });
 
   // From every edge, search all paths inwards to a root, fitting on the way.
   // The complete path with the best score per space point is the candidate
@@ -326,7 +351,7 @@ GraphBasedTrackSeeder::extractBestPathPerEdge(
     path.pop_back();
   };
 
-  for (std::uint32_t head = 0; head < nEdges; ++head) {
+  forEachLinked([&](const std::uint32_t head) {
     const detail::GbtsEdge& headEdge = edgeStorage[head];
 
     // `addTriplets` accepts a path one edge short at low eta
@@ -337,21 +362,21 @@ GraphBasedTrackSeeder::extractBestPathPerEdge(
     }
 
     if (edgesToRoot[head] == 0 || edgesToRoot[head] < minLength) {
-      continue;
+      return;
     }
 
     detail::GbtsEdgeState state;
     state.initialize(headEdge, nodeView, filter.m_cfg.initialVarianceX,
                      filter.m_cfg.initialVarianceY);
     if (!filter.update(nodeView, headEdge, state)) {
-      continue;
+      return;
     }
 
     bestQuality = std::numeric_limits<float>::max();
     bestPath.clear();
     search(search, head, state);
     if (bestPath.empty()) {
-      continue;
+      return;
     }
 
     bestState.vs.clear();
@@ -359,7 +384,7 @@ GraphBasedTrackSeeder::extractBestPathPerEdge(
       bestState.vs.push_back(&edgeStorage[e]);
     }
     candidates.push_back(bestState);
-  }
+  });
 
   return candidates;
 }

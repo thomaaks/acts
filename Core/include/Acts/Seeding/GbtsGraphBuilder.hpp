@@ -28,6 +28,10 @@ struct GbtsGraph {
 
   /// Number of links between edges.
   std::uint32_t nConnections = 0;
+
+  /// One bit an edge, set once it holds a neighbour: the seed extraction
+  /// reads these edges alone, the others ending every chain they are in.
+  std::vector<std::uint64_t> linked;
 };
 
 /// Builds the doublet graph of the GBTS workflow.

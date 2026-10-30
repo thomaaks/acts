@@ -16,41 +16,34 @@
 #include "Acts/Seeding/GbtsTauLookupTable.hpp"
 #include "Acts/Seeding/detail/GbtsGraphTypes.hpp"
 
+#include <array>
 #include <cassert>
 #include <cstdint>
 #include <memory>
 #include <optional>
-#include <span>
 #include <vector>
 
 namespace Acts::Experimental {
 
-class GraphBasedTrackSeeder;
 class GbtsGeometry;
-class GbtsGraphBuilder;
 
 /// Storage for the GBTS graph nodes.
 ///
 /// Nodes go in one at a time through `insert`, which takes plain scalars so
 /// that a caller can fill the storage from its own space point EDM. `finalize`
-/// then orders the nodes by (eta bin, phi) into a space point container, with
-/// the derived per-node data in dynamic columns on that container.
+/// then orders the nodes by (eta bin, phi), each with its position, caller's
+/// index and derived data in arrays indexed by node.
 class GbtsNodeStorage final {
-  // Declared here so the public accessor can return it; defined privately
-  // below.
-  struct Config;
-
  public:
   /// Maximum `Config::phiSortBuckets`; sizes the fixed bucket array.
   static constexpr std::uint32_t kMaxPhiSortBuckets = 31;
 
-  /// Filled storage is not relocatable: the column proxies point into the
-  /// space point container held by value.
+  /// Filled storage is not relocatable: the views it hands out point into
+  /// it.
   GbtsNodeStorage(const GbtsNodeStorage&) = delete;
   GbtsNodeStorage(GbtsNodeStorage&&) = delete;
   GbtsNodeStorage& operator=(const GbtsNodeStorage&) = delete;
   GbtsNodeStorage& operator=(GbtsNodeStorage&&) = delete;
-  ~GbtsNodeStorage() = default;
 
   //! [gbts insert]
   /// Insert a space point, deriving r and phi from the global position.
@@ -124,13 +117,15 @@ class GbtsNodeStorage final {
 
   /// Get the total number of nodes
   /// @return Total number of nodes
-  std::uint32_t numberOfNodes() const { return m_nodes.size(); }
+  std::uint32_t numberOfNodes() const {
+    return static_cast<std::uint32_t>(m_positions.size());
+  }
 
   /// Map a node index back to the index the caller used when inserting it.
   /// @param node Node index
   /// @return The caller's space point index
   SpacePointIndex spacePointIndex(SpacePointIndex node) const {
-    return m_nodes.copiedFromIndexColumn()[node];
+    return m_spacePointIndex[node];
   }
 
   /// Whether any node carries a stereo pair, i.e. whether the graph has a
@@ -138,10 +133,6 @@ class GbtsNodeStorage final {
   /// here that their pairs arrived.
   /// @return Whether there are any
   bool hasStrips() const { return !m_strips.empty(); }
-
-  /// Access the node loading configuration.
-  /// @return The configuration
-  const Config& config() const { return m_cfg; }
 
  private:
   // Only the seeder builds one, and only it and the graph walk the nodes.
@@ -179,36 +170,10 @@ class GbtsNodeStorage final {
                   std::shared_ptr<const GbtsGeometry> geometry,
                   GbtsTauLookupTable tauLut);
 
-  /// Get eta bin info by index
-  /// @param idx Eta bin index
-  /// @return Reference to the eta bin info
-  const detail::GbtsEtaBinInfo& etaBin(std::uint32_t idx) const {
-    return m_etaBins.at(idx < m_etaBins.size() ? idx : idx - 1);
-  }
-
   /// Read-only view of the node positions and layers
   /// @return Node view
   detail::GbtsNodeView nodeView() const {
-    return detail::GbtsNodeView{m_nodes.xyzrColumn().data(), m_layers, m_strips,
-                                m_stripIndex};
-  }
-
-  /// Per-node graph parameters, indexed by node index
-  /// @return Span over the node parameters
-  std::span<const detail::GbtsNodeParams> nodeParams() const {
-    return m_paramsColumn->data();
-  }
-
-  /// Per-node graph bookkeeping, indexed by node index
-  /// @return Mutable span over the node edge info
-  std::span<detail::GbtsNodeEdgeInfo> nodeEdgeInfo() {
-    return m_edgeInfoColumn->data();
-  }
-
-  /// Per-node graph bookkeeping, indexed by node index
-  /// @return Span over the node edge info
-  std::span<const detail::GbtsNodeEdgeInfo> nodeEdgeInfo() const {
-    return m_edgeInfoColumn->data();
+    return detail::GbtsNodeView{m_positions, m_layers, m_strips, m_stripIndex};
   }
 
   /// The stereo pair of a strip node, in the form the calibration reads.
@@ -244,10 +209,10 @@ class GbtsNodeStorage final {
   };
 
   /// Sort a single bin's staged nodes by phi.
-  /// @param staged Staged node indices of the bin
-  /// @return The staged indices in phi order
-  std::vector<std::uint32_t> sortBinByPhi(
-      const std::vector<std::uint32_t>& staged) const;
+  /// @param staged Staged nodes of the bin
+  /// @return Their (phi, index into @p staged) pairs in phi order
+  std::vector<std::pair<float, std::uint32_t>> sortBinByPhi(
+      const std::vector<StagedNode>& staged) const;
 
   /// Narrow a node's tau window using the tau lookup table.
   /// @param staged The staged node
@@ -255,24 +220,18 @@ class GbtsNodeStorage final {
   void applyTauCuts(const StagedNode& staged,
                     detail::GbtsNodeParams& params) const;
 
-  /// Build the wrap-around aware phi indexing for every bin.
-  /// @param dphi Width of the phi margin duplicated at the wrap-around
-  void generatePhiIndexing(float dphi);
-
   Config m_cfg;
 
   std::shared_ptr<const GbtsGeometry> m_geometry;
 
   GbtsTauLookupTable m_tauLut;
 
-  /// Nodes ordered by (eta bin, phi). Carries the caller's index and the packed
-  /// (x, y, z, r) position, plus the derived data as dynamic columns.
-  SpacePointContainer m_nodes;
-
-  std::optional<MutableSpacePointColumnProxy<detail::GbtsNodeParams>>
-      m_paramsColumn;
-  std::optional<MutableSpacePointColumnProxy<detail::GbtsNodeEdgeInfo>>
-      m_edgeInfoColumn;
+  /// Per node, in node order, i.e. by (eta bin, phi): the packed (x, y, z, r)
+  /// position, the caller's index and the derived data.
+  std::vector<std::array<float, 4>> m_positions;
+  std::vector<SpacePointIndex> m_spacePointIndex;
+  std::vector<detail::GbtsNodeParams> m_params;
+  std::vector<detail::GbtsNodeEdgeInfo> m_edgeInfo;
 
   /// Dense layer index per node, in node order.
   std::vector<GbtsLayerIndex> m_layers;
@@ -285,10 +244,9 @@ class GbtsNodeStorage final {
 
   std::vector<detail::GbtsEtaBinInfo> m_etaBins;
 
-  /// Nodes as inserted, before sorting.
-  std::vector<StagedNode> m_staged;
-  /// Staged node indices per eta bin.
-  std::vector<std::vector<std::uint32_t>> m_stagedPerBin;
+  /// Nodes as inserted, before sorting, per eta bin: each bin's are read
+  /// together when it is sorted, and grow on their own.
+  std::vector<std::vector<StagedNode>> m_stagedPerBin;
 };
 
 }  // namespace Acts::Experimental

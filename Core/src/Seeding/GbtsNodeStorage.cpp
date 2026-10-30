@@ -13,6 +13,7 @@
 #include "Acts/Utilities/MathHelpers.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 #include <numbers>
@@ -27,11 +28,8 @@ GbtsNodeStorage::GbtsNodeStorage(const Config& config,
     : m_cfg(config),
       m_geometry(std::move(geometry)),
       m_tauLut(std::move(tauLut)),
-      m_nodes(SpacePointColumns::CopiedFromIndex |
-              SpacePointColumns::PackedXYZR) {
-  m_etaBins.resize(m_geometry->numBins());
-  m_stagedPerBin.resize(m_geometry->numBins());
-}
+      m_etaBins(m_geometry->numBins()),
+      m_stagedPerBin(m_geometry->numBins()) {}
 
 std::optional<std::uint32_t> GbtsNodeStorage::insert(
     const SpacePointIndex index, const float x, const float y, const float z,
@@ -72,9 +70,8 @@ std::optional<std::uint32_t> GbtsNodeStorage::insert(
         Acts::detail::deriveOuterStripSpacePointCalibrationDetails(*strip));
   }
 
-  m_stagedPerBin.at(bin).push_back(static_cast<std::uint32_t>(m_staged.size()));
-  m_staged.emplace_back(index, x, y, z, r, phi, clusterWidth, localPositionY,
-                        layerIndex, stripIndex);
+  m_stagedPerBin.at(bin).emplace_back(index, x, y, z, r, phi, clusterWidth,
+                                      localPositionY, layerIndex, stripIndex);
 
   return bin;
 }
@@ -86,134 +83,156 @@ void GbtsNodeStorage::extend(
     const ConstSpacePointColumnProxy<float>& localPositionYColumn) {
   const bool strips =
       spacePoints.hasColumns(SpacePointColumns::StripCalibrationDetails);
-  m_staged.reserve(m_staged.size() + spacePoints.size());
   for (const auto& sp : spacePoints) {
     insert(sp, layerColumn, clusterWidthColumn, localPositionYColumn, strips);
   }
 }
 
-std::vector<std::uint32_t> GbtsNodeStorage::sortBinByPhi(
-    const std::vector<std::uint32_t>& staged) const {
+std::vector<std::pair<float, std::uint32_t>> GbtsNodeStorage::sortBinByPhi(
+    const std::vector<StagedNode>& staged) const {
   const std::uint32_t nBuckets = m_cfg.phiSortBuckets;
+  const auto bucketOf = [&](const float phi) {
+    return static_cast<std::uint32_t>(
+        0.5 * nBuckets * (phi / std::numbers::pi_v<float> + 1.0f));
+  };
+
+  // The buckets counted first and laid out in one array, rather than each
+  // grown on its own: the same buckets, in the same order.
+  std::array<std::uint32_t, kMaxPhiSortBuckets + 2> bucketStart{};
+  for (const StagedNode& node : staged) {
+    ++bucketStart[bucketOf(node.phi) + 1];
+  }
+  for (std::uint32_t bucket = 1; bucket <= nBuckets + 1; ++bucket) {
+    bucketStart[bucket] += bucketStart[bucket - 1];
+  }
+
+  std::array<std::uint32_t, kMaxPhiSortBuckets + 2> bucketEnd = bucketStart;
+  std::vector<std::pair<float, std::uint32_t>> phiOrder(staged.size());
+  for (std::uint32_t stagedIdx = 0; stagedIdx < staged.size(); ++stagedIdx) {
+    const float phi = staged[stagedIdx].phi;
+    phiOrder[bucketEnd[bucketOf(phi)]++] = {phi, stagedIdx};
+  }
+
   // Sort key (phi, z, r, staged index). Nodes with identical phi are ordered
   // by position, so the order does not depend on the input order. Only nodes
   // at the same position fall back to the insertion index.
-  using SortKey = std::tuple<float, float, float, std::uint32_t>;
-  std::array<std::vector<SortKey>, kMaxPhiSortBuckets + 1> phiBuckets;
-
-  for (const std::uint32_t stagedIdx : staged) {
-    const StagedNode& node = m_staged[stagedIdx];
-    const auto bIdx = static_cast<std::uint32_t>(
-        0.5 * nBuckets * (node.phi / std::numbers::pi_v<float> + 1.0f));
-    phiBuckets[bIdx].emplace_back(node.phi, node.z, node.r, stagedIdx);
-  }
-
+  const auto byKey = [&staged](const std::pair<float, std::uint32_t>& a,
+                               const std::pair<float, std::uint32_t>& b) {
+    const StagedNode& na = staged[a.second];
+    const StagedNode& nb = staged[b.second];
+    return std::tie(a.first, na.z, na.r, a.second) <
+           std::tie(b.first, nb.z, nb.r, b.second);
+  };
   for (std::uint32_t bucket = 0; bucket <= nBuckets; ++bucket) {
-    std::ranges::sort(phiBuckets[bucket]);
+    std::sort(phiOrder.begin() + bucketStart[bucket],
+              phiOrder.begin() + bucketStart[bucket + 1], byKey);
   }
 
-  std::vector<std::uint32_t> sorted;
-  sorted.reserve(staged.size());
-  for (std::uint32_t bucket = 0; bucket <= nBuckets; ++bucket) {
-    for (const SortKey& key : phiBuckets[bucket]) {
-      sorted.push_back(std::get<3>(key));
-    }
-  }
-
-  return sorted;
+  return phiOrder;
 }
 
 void GbtsNodeStorage::finalize() {
-  const auto nNodes = static_cast<std::uint32_t>(m_staged.size());
+  std::uint32_t nNodes = 0;
+  for (const std::vector<StagedNode>& staged : m_stagedPerBin) {
+    nNodes += static_cast<std::uint32_t>(staged.size());
+  }
 
-  m_nodes.reserve(nNodes);
+  m_positions.reserve(nNodes);
+  m_spacePointIndex.reserve(nNodes);
   m_layers.reserve(nNodes);
+  m_params.resize(nNodes);
+  m_edgeInfo.resize(nNodes);
 
-  // Node order across all bins, used to fill the derived columns below.
-  std::vector<std::uint32_t> nodeOrder;
-  nodeOrder.reserve(nNodes);
+  const float phiMargin = m_cfg.phiIndexMargin * m_cfg.phiSliceWidth;
+  const float twoPi = 2 * std::numbers::pi_v<float>;
+
+  // The strip pairs reordered into node order, so that the pairs a bin reads
+  // sit together; left empty when nothing carries one, which is what
+  // `hasStrips` reports.
+  std::vector<OuterStripSpacePointCalibrationDetailsDerived> strips;
+  if (!m_strips.empty()) {
+    m_stripIndex.assign(nNodes, detail::kNoStrip);
+    strips.reserve(m_strips.size());
+  }
 
   for (std::uint32_t bin = 0; bin < m_etaBins.size(); ++bin) {
     detail::GbtsEtaBinInfo& binInfo = m_etaBins[bin];
 
-    binInfo.nodes = {m_nodes.size(), m_nodes.size()};
+    binInfo.nodes = {numberOfNodes(), numberOfNodes()};
 
-    const std::vector<std::uint32_t>& staged = m_stagedPerBin[bin];
+    const std::vector<StagedNode>& staged = m_stagedPerBin[bin];
     if (staged.empty()) {
       continue;
     }
 
-    const std::vector<std::uint32_t> sorted = sortBinByPhi(staged);
+    const auto phiOrder = sortBinByPhi(staged);
 
-    float minRadius = std::numeric_limits<float>::max();
-    float maxRadius = std::numeric_limits<float>::lowest();
+    for (const auto& [phi, stagedIdx] : phiOrder) {
+      const StagedNode& node = staged[stagedIdx];
+      const std::uint32_t nodeIdx = numberOfNodes();
 
-    for (const std::uint32_t stagedIdx : sorted) {
-      const StagedNode& node = m_staged[stagedIdx];
-
-      auto newNode = m_nodes.createSpacePoint();
-      newNode.copiedFromIndex() = node.spacePointIndex;
-      newNode.xyzr() = std::array<float, 4>{node.x, node.y, node.z, node.r};
+      m_positions.push_back({node.x, node.y, node.z, node.r});
+      m_spacePointIndex.push_back(node.spacePointIndex);
 
       m_layers.push_back(node.layer);
-      nodeOrder.push_back(stagedIdx);
 
-      minRadius = std::min(minRadius, node.r);
-      maxRadius = std::max(maxRadius, node.r);
+      if (node.strip != detail::kNoStrip) {
+        m_stripIndex[nodeIdx] = static_cast<std::uint32_t>(strips.size());
+        strips.push_back(m_strips[node.strip]);
+      }
+
+      detail::GbtsNodeParams& params = m_params[nodeIdx];
+      params = {.phi = node.phi, .r = node.r, .z = node.z};
+
+      // minTau and maxTau keep their "do not cut" defaults unless the lookup
+      // table narrows them
+      if (m_cfg.useClusterWidthCuts) {
+        applyTauCuts(node, params);
+      }
+
+      binInfo.minRadius = std::min(binInfo.minRadius, node.r);
+      binInfo.maxRadius = std::max(binInfo.maxRadius, node.r);
+      binInfo.minZ = std::min(binInfo.minZ, node.z);
+      binInfo.maxZ = std::max(binInfo.maxZ, node.z);
     }
 
-    binInfo.nodes.second = m_nodes.size();
-    binInfo.minRadius = minRadius;
-    binInfo.maxRadius = maxRadius;
+    binInfo.nodes.second = numberOfNodes();
     // every node in a bin is on the same layer, so any of them will do
     const GbtsLayerDescription& description =
-        m_geometry->layerDescription(m_staged[staged.front()].layer);
+        m_geometry->layerDescription(staged.front().layer);
     binInfo.barrelOrder = description.barrelOrder;
-    binInfo.type = description.type;
     binInfo.technology = description.technology;
-  }
 
-  // Created now that the container has its final size, so that each column is
-  // allocated in a single resize.
-  m_paramsColumn.emplace(
-      m_nodes.createColumn<detail::GbtsNodeParams>("gbtsNodeParams"));
-  m_edgeInfoColumn.emplace(
-      m_nodes.createColumn<detail::GbtsNodeEdgeInfo>("gbtsNodeEdgeInfo"));
-
-  // Reordered into node order, so that the pairs a bin reads sit together;
-  // left empty when nothing carries one, which is what `hasStrips` reports.
-  std::vector<OuterStripSpacePointCalibrationDetailsDerived> strips;
-  if (!m_strips.empty()) {
-    m_stripIndex.assign(nodeOrder.size(), detail::kNoStrip);
-    strips.reserve(m_strips.size());
-  }
-
-  std::span<detail::GbtsNodeParams> params = m_paramsColumn->data();
-  for (std::uint32_t node = 0; node < nodeOrder.size(); ++node) {
-    const StagedNode& staged = m_staged[nodeOrder[node]];
-
-    if (staged.strip != detail::kNoStrip) {
-      m_stripIndex[node] = static_cast<std::uint32_t>(strips.size());
-      strips.push_back(m_strips[staged.strip]);
+    // The bin's (phi, node) pairs in phi order, those within the margin of the
+    // wrap-around repeated shifted by 2pi, so that the phi sliding window never
+    // has to wrap: the last nodes before them and the first ones after, sized
+    // up front.
+    const auto n = static_cast<std::uint32_t>(phiOrder.size());
+    std::uint32_t head = 0;
+    while (head < n &&
+           phiOrder[head].first < -std::numbers::pi_v<float> + phiMargin) {
+      ++head;
     }
-
-    params[node].phi = staged.phi;
-    params[node].r = staged.r;
-    params[node].z = staged.z;
-
-    // minTau and maxTau keep their "do not cut" defaults unless the lookup
-    // table narrows them
-    if (m_cfg.useClusterWidthCuts) {
-      applyTauCuts(staged, params[node]);
+    std::uint32_t tail = n;
+    while (tail > 0 &&
+           phiOrder[tail - 1].first > std::numbers::pi_v<float> - phiMargin) {
+      --tail;
+    }
+    const SpacePointIndex first = binInfo.nodes.first;
+    binInfo.phiNodes.reserve(n - tail + n + head);
+    for (std::uint32_t k = tail; k < n; ++k) {
+      binInfo.phiNodes.emplace_back(phiOrder[k].first - twoPi, first + k);
+    }
+    for (std::uint32_t k = 0; k < n; ++k) {
+      binInfo.phiNodes.emplace_back(phiOrder[k].first, first + k);
+    }
+    for (std::uint32_t k = 0; k < head; ++k) {
+      binInfo.phiNodes.emplace_back(phiOrder[k].first + twoPi, first + k);
     }
   }
 
   m_strips = std::move(strips);
 
-  generatePhiIndexing(m_cfg.phiIndexMargin * m_cfg.phiSliceWidth);
-
-  m_staged.clear();
-  m_staged.shrink_to_fit();
   m_stagedPerBin.clear();
   m_stagedPerBin.shrink_to_fit();
 }
@@ -255,39 +274,6 @@ void GbtsNodeStorage::applyTauCuts(const StagedNode& staged,
   if (params.maxTau < 0) {
     // insufficient training data, do not cut on tau
     params.maxTau = std::numeric_limits<float>::infinity();
-  }
-}
-
-void GbtsNodeStorage::generatePhiIndexing(const float dphi) {
-  const std::span<const detail::GbtsNodeParams> params = m_paramsColumn->data();
-
-  for (detail::GbtsEtaBinInfo& bin : m_etaBins) {
-    if (bin.empty()) {
-      continue;
-    }
-
-    const SpacePointIndex begin = bin.nodes.first;
-    const SpacePointIndex end = bin.nodes.second;
-
-    for (SpacePointIndex node = begin; node < end; ++node) {
-      const float phi = params[node].phi;
-      if (phi <= std::numbers::pi_v<float> - dphi) {
-        continue;
-      }
-      bin.phiNodes.emplace_back(phi - 2 * std::numbers::pi_v<float>, node);
-    }
-
-    for (SpacePointIndex node = begin; node < end; ++node) {
-      bin.phiNodes.emplace_back(params[node].phi, node);
-    }
-
-    for (SpacePointIndex node = begin; node < end; ++node) {
-      const float phi = params[node].phi;
-      if (phi >= -std::numbers::pi_v<float> + dphi) {
-        break;
-      }
-      bin.phiNodes.emplace_back(phi + 2 * std::numbers::pi_v<float>, node);
-    }
   }
 }
 

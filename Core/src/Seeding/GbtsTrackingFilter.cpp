@@ -28,11 +28,12 @@ void detail::GbtsEdgeState::initialize(const detail::GbtsEdge& pS,
 
   // n2->n1
 
-  const detail::GbtsNodeProxy n1 = nodeView[pS.n1];
-  const detail::GbtsNodeProxy n2 = nodeView[pS.n2];
+  // (x, y, z, r)
+  const std::array<float, 4>& n1 = nodeView.positions[pS.n1];
+  const std::array<float, 4>& n2 = nodeView.positions[pS.n2];
 
-  const float dx = n1.x() - n2.x();
-  const float dy = n1.y() - n2.y();
+  const float dx = n1[0] - n2[0];
+  const float dy = n1[1] - n2[1];
   const float L = std::sqrt(dx * dx + dy * dy);
 
   s = dy / L;
@@ -42,28 +43,19 @@ void detail::GbtsEdgeState::initialize(const detail::GbtsEdge& pS,
   //  x' =  x*c + y*s
   //  y' = -x*s + y*c
 
-  refY = n2.r();
-  refX = n2.x() * c + n2.y() * s;
+  refY = n2[3];
+  refX = n2[0] * c + n2[1] * s;
 
   // X-state: y, dy/dx, d2y/dx2
 
-  x[0] = -n2.x() * s + n2.y() * c;
-  x[1] = 0;
-  x[2] = 0;
+  x = {-n2[0] * s + n2[1] * c, 0, 0};
 
   // Y-state: z, dz/dr
 
-  y[0] = n2.z();
-  y[1] = (n1.z() - n2.z()) / (n1.r() - n2.r());
+  y = {n2[2], (n1[2] - n2[2]) / (n1[3] - n2[3])};
 
-  cx = {};
-  cx[0][0] = varianceX[0];
-  cx[1][1] = varianceX[1];
-  cx[2][2] = varianceX[2];
-
-  cy = {};
-  cy[0][0] = varianceY[0];
-  cy[1][1] = varianceY[1];
+  cx = {{{varianceX[0], 0, 0}, {0, varianceX[1], 0}, {0, 0, varianceX[2]}}};
+  cy = {{{varianceY[0], 0}, {0, varianceY[1]}}};
 }
 
 }  // namespace Acts::Experimental::detail
@@ -78,30 +70,22 @@ GbtsTrackingFilter::GbtsTrackingFilter(
 bool GbtsTrackingFilter::update(const detail::GbtsNodeView& nodeView,
                                 const detail::GbtsEdge& pS,
                                 detail::GbtsEdgeState& ts) const {
-  if (ts.cx[2][2] < 0 || ts.cx[1][1] < 0 || ts.cx[0][0] < 0) {
-    ACTS_DEBUG("Negative cov_x");
-  }
-
-  if (ts.cy[1][1] < 0 || ts.cy[0][0] < 0) {
-    ACTS_DEBUG("Negative cov_y");
-  }
-
   // add ms.
 
   const float tau2 = ts.y[1] * ts.y[1];
   const float invSin2 = 1 + tau2;
 
-  const detail::GbtsNodeProxy n1 = nodeView[pS.n1];
-  const detail::GbtsNodeProxy n2 = nodeView[pS.n2];
-
-  const GbtsLayerType layerType1 = getLayerType(n2.layer());
+  // (x, y, z, r)
+  const std::array<float, 4>& n1 = nodeView.positions[pS.n1];
 
   const float lenCorr =
-      layerType1 == GbtsLayerType::Barrel ? invSin2 : invSin2 / tau2;
+      m_geometry->layerDescription(nodeView.layers[pS.n2]).type ==
+              GbtsLayerType::Barrel
+          ? invSin2
+          : invSin2 / tau2;
 
-  const float minPtFrac = std::abs(ts.x[2]) / m_cfg.maxCurvature;
-
-  const float corrMS = m_cfg.sigmaMS * minPtFrac;
+  // the curvature as a fraction of the largest, as the minimum pT's
+  const float corrMS = m_cfg.sigmaMS * (std::abs(ts.x[2]) / m_cfg.maxCurvature);
 
   const float sigma2 = m_cfg.radLen * lenCorr * corrMS * corrMS;  // /invSin2
 
@@ -111,28 +95,22 @@ bool GbtsTrackingFilter::update(const detail::GbtsNodeView& nodeView,
 
   // extrapolation
 
-  std::array<float, 3> X{};
-  std::array<float, 2> Y{};
   std::array<std::array<float, 3>, 3> Cx{};
   std::array<std::array<float, 2>, 2> Cy{};
 
-  const float x = n1.x();
-  const float y = n1.y();
-  const float z = n1.z();
-  const float r = n1.r();
+  const float x = n1[0];
+  const float y = n1[1];
+  const float r = n1[3];
 
   const float refX = x * ts.c + y * ts.s;
-  const float mx = -x * ts.s + y * ts.c;  // measured X[0]
-  const float refY = r;
-  const float my = z;  // measured Y[0]
+  const float mx = -x * ts.s + y * ts.c;  // measured X[0]; Y[0]'s is z
 
   const float A = refX - ts.refX;
   const float B = 0.5 * A * A;
-  const float dr = refY - ts.refY;
+  const float dr = r - ts.refY;
 
-  X[0] = ts.x[0] + ts.x[1] * A + ts.x[2] * B;
-  X[1] = ts.x[1] + ts.x[2] * A;
-  X[2] = ts.x[2];
+  const std::array<float, 3> X = {ts.x[0] + ts.x[1] * A + ts.x[2] * B,
+                                  ts.x[1] + ts.x[2] * A, ts.x[2]};
 
   Cx[0][0] = ts.cx[0][0] + 2 * ts.cx[0][1] * A + 2 * ts.cx[0][2] * B +
              A * A * ts.cx[1][1] + 2 * A * B * ts.cx[1][2] +
@@ -147,8 +125,7 @@ bool GbtsTrackingFilter::update(const detail::GbtsNodeView& nodeView,
 
   Cx[2][2] = ts.cx[2][2];
 
-  Y[0] = ts.y[0] + ts.y[1] * dr;
-  Y[1] = ts.y[1];
+  const std::array<float, 2> Y = {ts.y[0] + ts.y[1] * dr, ts.y[1]};
 
   Cy[0][0] = ts.cy[0][0] + 2 * ts.cy[0][1] * dr + dr * dr * ts.cy[1][1];
   Cy[0][1] = Cy[1][0] = ts.cy[0][1] + dr * ts.cy[1][1];
@@ -157,21 +134,17 @@ bool GbtsTrackingFilter::update(const detail::GbtsNodeView& nodeView,
   // chi2 test
 
   const float resid_x = mx - X[0];
-  const float resid_y = my - Y[0];
+  const float resid_y = n1[2] - Y[0];
 
-  const std::array<float, 3> CHx = {Cx[0][0], Cx[0][1], Cx[0][2]};
-  const std::array<float, 2> CHy = {Cy[0][0], Cy[0][1]};
-
-  float sigma_rz = 0;
-
-  const GbtsLayerType type = getLayerType(n1.layer());
+  const GbtsLayerType type =
+      m_geometry->layerDescription(nodeView.layers[pS.n1]).type;
 
   // Across the strips a pair is sharper than a pixel, along them far worse:
   // the crossing is unconstrained over the strip, a half length over sqrt(3)
   // off its half vector -- the outer strip's, a stereo angle from the inner.
   float sigmaX = m_cfg.sigmaX;
   float sigmaY = m_cfg.sigmaY;
-  if (const auto* strip = nodeView.strip(n1.index()); strip != nullptr) {
+  if (const auto* strip = nodeView.strip(pS.n1); strip != nullptr) {
     constexpr float invSqrt3 = std::numbers::inv_sqrt3_v<float>;
     const std::array<float, 3>& half = strip->outerHalfVector;
     // the walk is along the strip, so project its reach onto the fit's axes
@@ -182,14 +155,8 @@ bool GbtsTrackingFilter::update(const detail::GbtsNodeView& nodeView,
              invSqrt3;
   }
 
-  if (type == GbtsLayerType::Barrel) {
-    sigma_rz = sigmaY * sigmaY;
-  } else if (type == GbtsLayerType::Endcap) {
-    sigma_rz = sigmaY * ts.y[1];
-    sigma_rz = sigma_rz * sigma_rz;
-  } else {
-    throw std::runtime_error("invalid layer type");
-  }
+  const float sigma_rz =
+      square(type == GbtsLayerType::Barrel ? sigmaY : sigmaY * ts.y[1]);
 
   const float Dx = 1.0f / (Cx[0][0] + sigmaX * sigmaX);
 
@@ -221,7 +188,7 @@ bool GbtsTrackingFilter::update(const detail::GbtsNodeView& nodeView,
     ts.y[i] = Y[i] + Ky[i] * resid_y;
   }
 
-  const float z0 = ts.y[0] - refY * ts.y[1];
+  const float z0 = ts.y[0] - r * ts.y[1];
 
   if (std::abs(z0) > m_cfg.maxZ0) {
     return false;
@@ -229,23 +196,18 @@ bool GbtsTrackingFilter::update(const detail::GbtsNodeView& nodeView,
 
   for (std::uint32_t i = 0; i < 3; ++i) {
     for (std::uint32_t j = 0; j < 3; ++j) {
-      ts.cx[i][j] = Cx[i][j] - Kx[i] * CHx[j];
+      ts.cx[i][j] = Cx[i][j] - Kx[i] * Cx[0][j];
     }
   }
 
   for (std::uint32_t i = 0; i < 2; ++i) {
     for (std::uint32_t j = 0; j < 2; ++j) {
-      ts.cy[i][j] = Cy[i][j] - Ky[i] * CHy[j];
+      ts.cy[i][j] = Cy[i][j] - Ky[i] * Cy[0][j];
     }
   }
   ts.refX = refX;
-  ts.refY = refY;
+  ts.refY = r;
   return true;
-}
-
-GbtsLayerType GbtsTrackingFilter::getLayerType(
-    const GbtsLayerIndex layerIndex) const {
-  return m_geometry->layerDescription(layerIndex).type;
 }
 
 }  // namespace Acts::Experimental

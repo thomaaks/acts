@@ -23,10 +23,6 @@
 
 namespace Acts::Experimental {
 
-class GbtsNodeStorage;
-class GbtsTrackingFilter;
-class GraphBasedTrackSeeder;
-
 /// z0 range two eta bins must share a trajectory within, which fixes the bin
 /// table. A separate cut from `GraphBasedTrackSeeder::Config::minZ0`.
 struct GbtsZ0Range final {
@@ -86,27 +82,13 @@ class GbtsGeometry final {
  private:
   // The layer object is shared only with the classes that build the graph.
   friend class GbtsNodeStorage;
-  friend class GbtsTrackingFilter;
-  friend class GraphBasedTrackSeeder;
-
-  /// Get layer by ID
-  /// @param id Layer ID
-  /// @return Pointer to layer or nullptr
-  const detail::GbtsLayer* layerById(GbtsExperimentLayerId id) const;
 
   /// Get layer by index
   /// @param idx Layer index
   /// @return Reference to layer
-  const detail::GbtsLayer& layerByIndex(GbtsLayerIndex idx) const;
-
-  /// @param layerDescription Layer description for the layer
-  /// @param bin0 Starting bin index
-  /// @return Reference to the newly added layer
-  const detail::GbtsLayer& createLayer(
-      const GbtsLayerDescription& layerDescription, std::uint32_t bin0);
-
-  /// Eta bin width
-  float m_etaBinWidth{};
+  const detail::GbtsLayer& layerByIndex(GbtsLayerIndex idx) const {
+    return m_layers.at(idx);
+  }
 
   /// Layer array
   std::vector<detail::GbtsLayer> m_layers;

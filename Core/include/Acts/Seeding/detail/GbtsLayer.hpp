@@ -72,6 +72,9 @@ class GbtsLayer final {
 
   std::vector<float> m_minBinCoord;
   std::vector<float> m_maxBinCoord;
+
+  /// z / r at the lower eta edge of each bin but the first, ascending
+  std::vector<float> m_tauEdges;
 };
 
 }  // namespace Acts::Experimental::detail

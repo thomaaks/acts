@@ -9,12 +9,10 @@
 #pragma once
 
 #include "Acts/Definitions/Units.hpp"
-#include "Acts/Seeding/GbtsLayerDescription.hpp"
 #include "Acts/Seeding/detail/GbtsFilterTypes.hpp"
 #include "Acts/Utilities/Logger.hpp"
 
 #include <array>
-#include <cstdint>
 #include <memory>
 #include <vector>
 
@@ -98,11 +96,6 @@ class GbtsTrackingFilter final {
   /// @return Success flag
   bool update(const detail::GbtsNodeView& nodeView, const detail::GbtsEdge& pS,
               detail::GbtsEdgeState& ts) const;
-
-  /// Get layer type from layer index
-  /// @param layerIndex Layer index
-  /// @return Layer type
-  GbtsLayerType getLayerType(GbtsLayerIndex layerIndex) const;
 };
 
 }  // namespace Acts::Experimental

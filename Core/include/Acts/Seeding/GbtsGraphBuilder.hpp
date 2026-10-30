@@ -10,7 +10,6 @@
 
 #include "Acts/Definitions/Units.hpp"
 #include "Acts/Seeding/GbtsGeometry.hpp"
-#include "Acts/Seeding/GbtsLayerDescription.hpp"
 #include "Acts/Seeding/GbtsNodeStorage.hpp"
 #include "Acts/Seeding/GbtsRoiDescriptor.hpp"
 #include "Acts/Seeding/detail/GbtsGraphTypes.hpp"
@@ -18,7 +17,6 @@
 
 #include <cstdint>
 #include <memory>
-#include <utility>
 #include <vector>
 
 namespace Acts::Experimental {
@@ -170,10 +168,6 @@ class GbtsGraphBuilder {
                    std::unique_ptr<const Acts::Logger> logger =
                        Acts::getDefaultLogger("GbtsGraphBuilder",
                                               Acts::Logging::Level::INFO));
-
-  /// Access the configuration.
-  /// @return The configuration
-  const Config& config() const { return m_cfg; }
 
   /// Build doublet graph from nodes.
   /// @param roi Region of interest descriptor

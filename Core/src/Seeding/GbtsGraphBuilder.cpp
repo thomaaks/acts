@@ -231,6 +231,7 @@ GbtsGraph GbtsGraphBuilder::buildTheGraph(const GbtsRoiDescriptor& roi,
       m_cfg.maxEdgesPerSP * static_cast<float>(nodeStorage.numberOfNodes()));
 
   edgeStorage.reserve(maxEdges);
+  graph.linked.assign(maxEdges / 64 + 1, 0);
 
   // scale factor to get indexes of binned beamspot
   const float z0HistoCoeff =
@@ -710,6 +711,8 @@ GbtsGraph GbtsGraphBuilder::buildTheGraph(const GbtsRoiDescriptor& roi,
 
               pS->vNei[pS->nNei] = outEdgeIdx;
               ++pS->nNei;
+              graph.linked[inEdgeIdx / 64] |= std::uint64_t{1}
+                                              << (inEdgeIdx % 64);
 
               isConnected = true;  // there is at least one good match
 
@@ -761,6 +764,7 @@ GbtsGraph GbtsGraphBuilder::buildTheGraph(const GbtsRoiDescriptor& roi,
                          << " neighbours - possible efficiency loss");
   }
   graph.nConnections = nConnections;
+  graph.linked.resize(edgeStorage.size() / 64 + 1);
   return graph;
 }
 

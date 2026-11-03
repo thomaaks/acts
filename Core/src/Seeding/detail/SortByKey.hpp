@@ -25,7 +25,9 @@ namespace Acts::detail {
 
 /// The limit up to which a quadratic sort is used: the rank sort for the whole
 /// list instead of the linear bucket sort, and the insertion pass for one
-/// bucket instead of std::ranges::stable_sort
+/// bucket instead of std::ranges::stable_sort. A general value, not tuned for
+/// one architecture: anything from 32 to 256 does about as well, below 32 it
+/// can get slower.
 inline constexpr std::size_t kQuadraticLinearCrossover = 32;
 
 /// Sorts at most @p kMaxSize items stably by key with a rank sort: an item's

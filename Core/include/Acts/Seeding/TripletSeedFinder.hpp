@@ -14,7 +14,6 @@
 #include "Acts/Utilities/Delegate.hpp"
 #include "Acts/Utilities/detail/ContainerIterator.hpp"
 
-#include <cassert>
 #include <span>
 #include <vector>
 
@@ -50,28 +49,30 @@ class TripletTopCandidates {
   /// @param spT Space point index for the top space point of the triplet
   /// @param curvature Track curvature estimation for the triplet
   /// @param impactParameter Impact parameter estimation for the triplet
-  /// @note The space has to be reserved before
   void emplace_back(SpacePointIndex spT, float curvature,
                     float impactParameter) {
-    assert(m_size < m_topSpacePoints.size() && "Space was not reserved");
+    // One size check for all three arrays, which grow together
+    if (m_size == m_topSpacePoints.size()) {
+      reserve(m_size == 0 ? 16 : 2 * m_size);
+    }
     m_topSpacePoints[m_size] = spT;
     m_curvatures[m_size] = curvature;
     m_impactParameters[m_size] = impactParameter;
     ++m_size;
   }
 
-  /// @brief Returns the vector of top space point indices
-  /// @return Const reference to vector containing all top space point indices
+  /// @brief Returns the top space point indices of the candidates
+  /// @return Span of the top space point indices of all candidates
   std::span<const SpacePointIndex> topSpacePoints() const {
     return std::span(m_topSpacePoints).first(m_size);
   }
-  /// @brief Returns the vector of track curvature estimations
-  /// @return Const reference to vector containing curvature values for all candidates
+  /// @brief Returns the track curvature estimations of the candidates
+  /// @return Span of the curvature values of all candidates
   std::span<const float> curvatures() const {
     return std::span(m_curvatures).first(m_size);
   }
-  /// @brief Returns the vector of impact parameter estimations
-  /// @return Const reference to vector containing impact parameter values for all candidates
+  /// @brief Returns the impact parameter estimations of the candidates
+  /// @return Span of the impact parameter values of all candidates
   std::span<const float> impactParameters() const {
     return std::span(m_impactParameters).first(m_size);
   }

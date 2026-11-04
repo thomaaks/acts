@@ -39,8 +39,7 @@ class TripletTopCandidates {
   /// @param spT Space point index for the top space point of the triplet
   /// @param curvature Track curvature estimation for the triplet
   /// @param impactParameter Impact parameter estimation for the triplet
-  void emplace_back(SpacePointIndex spT, float curvature,
-                    float impactParameter) {
+  void push_back(SpacePointIndex spT, float curvature, float impactParameter) {
     m_candidates.push_back({spT, curvature, impactParameter});
   }
 

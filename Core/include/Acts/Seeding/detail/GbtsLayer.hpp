@@ -53,6 +53,16 @@ class GbtsLayer final {
                           std::uint32_t b2, float minZ0, float maxZ0,
                           float z0Tolerance) const;
 
+  /// Whether every straight line between a bin of this layer and a bin of
+  /// another crosses an endcap layer between them within its radial extent.
+  /// @param otherLayer Other layer
+  /// @param b1 Bin of this layer
+  /// @param b2 Bin of the other layer
+  /// @param middle The endcap layer the lines are to cross
+  /// @return True if none can miss it
+  bool linesCross(const GbtsLayer& otherLayer, std::uint32_t b1,
+                  std::uint32_t b2, const GbtsLayer& middle) const;
+
  private:
   struct LayerPoint final {
     float r{};

@@ -49,8 +49,8 @@ class GraphBasedTrackSeeder {
 
     // Seed extraction options
 
-    /// Longest chain of edges taken into account. Edges in longer chains take
-    /// no part in the seed extraction.
+    /// Longest chain of edges taken into account, at most 254: levels are kept
+    /// in a byte. Edges in longer chains take no part in the seed extraction.
     std::uint32_t maxChainLength = 15;
     /// Chain length a seed candidate must reach: a triplet plus one
     /// confirmation.
@@ -162,22 +162,25 @@ class GraphBasedTrackSeeder {
   /// candidate seed metadata produced by the GBTS algorithm.
   struct SeedCandidateProperties {
     /// @param quality Seed quality score
-    /// @param clone Whether the candidate was rejected as a clone
-    /// @param sps Vector of graph node indices
+    /// @param first Offset of its graph node indices in the nodes buffer
+    /// @param num Number of its graph node indices
     /// @param splitFlag used to flag if seed needs to be split in two
-    SeedCandidateProperties(float quality, bool clone,
-                            std::vector<SpacePointIndex> sps, bool splitFlag)
+    SeedCandidateProperties(float quality, std::uint32_t first,
+                            std::uint32_t num, bool splitFlag)
         : seedQuality(quality),
-          isClone(clone),
-          nodes(std::move(sps)),
+          firstNode(first),
+          numNodes(num),
           forSeedSplitting(splitFlag) {}
 
     /// Seed quality score.
     float seedQuality{};
     /// Clone flag.
     bool isClone{};
-    /// Graph node indices.
-    std::vector<SpacePointIndex> nodes;
+    /// Offset of its graph node indices, the innermost first, in the buffer
+    /// `extractBestPathPerEdge` fills.
+    std::uint32_t firstNode{};
+    /// Number of its graph node indices.
+    std::uint32_t numNodes{};
     /// Flag for seed splitting.
     bool forSeedSplitting{};
     /// Fit of the tracking filter.
@@ -220,21 +223,26 @@ class GraphBasedTrackSeeder {
                                 const GbtsTrackingFilter& filter,
                                 bool withFits) const;
 
-  /// A fitted path: the filter's state at its end, and its edges, the head
-  /// edge first.
+  /// A fitted path: the filter's state at its end, its head edge, and where
+  /// its nodes, the innermost first, are in the shared nodes buffer.
   struct FittedPath {
     detail::GbtsEdgeState state;
-    std::vector<std::uint32_t> edges;
+    std::uint32_t head{};
+    std::uint32_t firstNode{};
+    std::uint32_t numNodes{};
   };
 
   /// Extract the best fitted path from every edge inwards to a root edge.
   /// @param nodeView View of the node positions and layers
   /// @param graph The graph
   /// @param filter Tracking filter fitting the paths
+  /// @param candidateNodes Filled with the nodes of every path, the innermost
+  ///        first, which `FittedPath::firstNode` and `numNodes` index
   /// @return The fitted paths
   std::vector<FittedPath> extractBestPathPerEdge(
       const detail::GbtsNodeView& nodeView, const GbtsGraph& graph,
-      const GbtsTrackingFilter& filter) const;
+      const GbtsTrackingFilter& filter,
+      std::vector<SpacePointIndex>& candidateNodes) const;
 
   /// Estimate the inverse radius of the circle through three nodes.
   /// @param nodeView View of the node positions and layers

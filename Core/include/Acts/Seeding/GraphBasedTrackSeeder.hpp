@@ -180,6 +180,9 @@ class GraphBasedTrackSeeder {
     std::vector<SpacePointIndex> nodes;
     /// Flag for seed splitting.
     bool forSeedSplitting{};
+    /// A split seed whose middle node is the likelier stray: written without
+    /// it alone.
+    bool middleOnly{};
     /// Fit of the tracking filter.
     std::optional<GbtsSeedFit> fit;
   };

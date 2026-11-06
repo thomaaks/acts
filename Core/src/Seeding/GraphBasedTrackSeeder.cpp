@@ -153,6 +153,8 @@ void GraphBasedTrackSeeder::extractSeedsFromTheGraph(
                          (origSeedSize >= m_cfg.minSplitSeedSize) &&
                          (origSeedSize <= m_cfg.maxSplitSeedSize);
 
+    bool middleOnly = false;
+
     // split the seed by dropping spacepoints
     if (seedSplitFlag) {
       // 2. "drop-outs" and the original seed candidate
@@ -199,9 +201,21 @@ void GraphBasedTrackSeeder::extractSeedsFromTheGraph(
       if (confirmed) {
         seedSplitFlag = false;  // reset the flag
       }
+
+      // A stray node bends the circles through it alike, so those agree and
+      // the one without it stands apart. The middle node is, of four, in the
+      // seed's own circle and the first drop-out's, of five in the seed's
+      // alone. Where those agree best, a pixel seed needs only the drop-out
+      // without it.
+      const auto [dMiddle, dOther] = origSeedSize % 2 == 0
+                                         ? std::pair{diffs[0], diffs[2]}
+                                         : std::pair{diffs[2], diffs[0]};
+      middleOnly = nodeView.stripIndex.empty() &&
+                   dMiddle < std::min(diffs[1], dOther);
     }
 
     vSeedCandidates.emplace_back(origSeedQuality, false, vN, seedSplitFlag);
+    vSeedCandidates.back().middleOnly = middleOnly;
 
     if (withFits) {
       // filter state at the innermost node, x' along the first edge (inwards)
@@ -314,6 +328,10 @@ void GraphBasedTrackSeeder::extractSeedsFromTheGraph(
         0, seedSize / 2ul};  // the first and the middle
 
     for (const auto& skipIdx : indices2drop) {
+      if (seed.middleOnly && skipIdx != seedSize / 2) {
+        continue;  // only the drop-out without the middle node
+      }
+
       std::vector<std::uint32_t> newSeed;
 
       newSeed.reserve(seedSize - 1);

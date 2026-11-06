@@ -155,6 +155,30 @@ bool GbtsLayer::checkCompatibility(const GbtsLayer& otherLayer,
   return !(z0Max < minZ0 - z0Tolerance || z0Min > maxZ0 + z0Tolerance);
 }
 
+bool GbtsLayer::linesCross(const GbtsLayer& otherLayer, const std::uint32_t b1,
+                           const std::uint32_t b2,
+                           const GbtsLayer& middle) const {
+  const float z = middle.m_layerDescription.refCoord;
+  const std::array<LayerPoint, 2> ends1 = {pointAt(m_minBinCoord.at(b1)),
+                                           pointAt(m_maxBinCoord.at(b1))};
+  const std::array<LayerPoint, 2> ends2 = {
+      otherLayer.pointAt(otherLayer.m_minBinCoord.at(b2)),
+      otherLayer.pointAt(otherLayer.m_maxBinCoord.at(b2))};
+  for (const LayerPoint& p1 : ends1) {
+    for (const LayerPoint& p2 : ends2) {
+      if ((z - p1.z) * (z - p2.z) >= 0) {
+        return false;  // not between them
+      }
+      const float r = p1.r + (p2.r - p1.r) * (z - p1.z) / (p2.z - p1.z);
+      if (r < middle.m_layerDescription.minBound ||
+          r > middle.m_layerDescription.maxBound) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 std::uint32_t GbtsLayer::getEtaBin(const float zh, const float rh) const {
   if (m_binning.numBins == 1) {
     return m_binning.firstBin;
@@ -351,6 +375,50 @@ GbtsGeometry::GbtsGeometry(
       bin1Links.second.push_back(bin2);  // incoming link bin1 <- bin2
       bin2Links.first.push_back(bin1);   // outgoing link bin2 -> bin1
     }
+  }
+
+  // A link between pixel endcap bins that a chain can also make in two steps
+  // through a third bin is left out where every line between them crosses that
+  // bin's layer: a track between them has its hit there, so the steps find it,
+  // and the long link only multiplies the doublets of hits that are no track.
+  const auto isEndcap = [&](const std::uint32_t bin) {
+    const GbtsLayerDescription& layer = binLayerMap[bin]->layerDescription();
+    return layer.type == GbtsLayerType::Endcap &&
+           layer.technology == GbtsLayerTechnology::Pixel;
+  };
+  const auto linksTo = [&](const std::uint32_t bin1, const std::uint32_t bin2) {
+    return std::ranges::any_of(binMap.at(bin1).second,
+                               [bin2](const GbtsBinLink& link) {
+                                 return link.bin == bin2;
+                               });
+  };
+  std::vector<std::pair<std::uint32_t, std::uint32_t>> implied;
+  for (const auto& [bin1, entry] : binMap) {
+    if (!isEndcap(bin1)) {
+      continue;
+    }
+    for (const GbtsBinLink& link : entry.second) {
+      if (isEndcap(link.bin) &&
+          std::ranges::any_of(entry.second, [&](const GbtsBinLink& via) {
+            if (via.bin == link.bin || via.bin == bin1 ||
+                !isEndcap(via.bin) || !linksTo(via.bin, link.bin)) {
+              return false;
+            }
+            const detail::GbtsLayer& layer1 = *binLayerMap[bin1];
+            const detail::GbtsLayer& layer2 = *binLayerMap[link.bin];
+            return layer1.linesCross(layer2, bin1 - layer1.binning().firstBin,
+                                     link.bin - layer2.binning().firstBin,
+                                     *binLayerMap[via.bin]);
+          })) {
+        implied.emplace_back(bin1, link.bin);
+      }
+    }
+  }
+  for (const auto& [bin1, bin2] : implied) {
+    std::erase_if(binMap.at(bin1).second, [bin2](const GbtsBinLink& link) {
+      return link.bin == bin2;
+    });
+    std::erase(binMap.at(bin2).first, bin1);
   }
 
   // copy bin map as original is still needed

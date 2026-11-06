@@ -96,16 +96,12 @@ void GbtsNodeStorage::extend(
   }
 }
 
-std::vector<std::uint32_t> GbtsNodeStorage::sortBinByPhi(
-    const std::vector<std::uint32_t>& staged) const {
+const std::vector<std::uint32_t>& GbtsNodeStorage::sortBinByPhi(
+    const std::vector<std::uint32_t>& staged, PhiSortBuffers& buffers) const {
   using Item = std::pair<std::uint32_t, float>;
-  struct PhiSortBuckets {
-    std::vector<Item> scratch;
-    std::vector<std::uint32_t> buckets;
-  };
 
-  std::vector<Item> items;
-  items.reserve(staged.size());
+  std::vector<Item>& items = buffers.items;
+  items.clear();
   for (const std::uint32_t stagedIdx : staged) {
     items.emplace_back(stagedIdx, m_staged[stagedIdx].phi);
   }
@@ -121,11 +117,11 @@ std::vector<std::uint32_t> GbtsNodeStorage::sortBinByPhi(
     return std::tie(nodeA.z, nodeA.r) < std::tie(nodeB.z, nodeB.r);
   };
 
-  PhiSortBuckets phiBuckets;
-  Acts::detail::sortByKey(std::span(items), phiBuckets, phiOf, byPosition);
+  Acts::detail::sortByKey(std::span(items), buffers, phiOf, byPosition);
 
   const auto order = items | std::views::keys;
-  return {order.begin(), order.end()};
+  buffers.sorted.assign(order.begin(), order.end());
+  return buffers.sorted;
 }
 
 void GbtsNodeStorage::finalize() {
@@ -138,6 +134,7 @@ void GbtsNodeStorage::finalize() {
   std::vector<std::uint32_t> nodeOrder;
   nodeOrder.reserve(nNodes);
 
+  PhiSortBuffers phiSort;
   for (std::uint32_t bin = 0; bin < m_etaBins.size(); ++bin) {
     detail::GbtsEtaBinInfo& binInfo = m_etaBins[bin];
 
@@ -148,7 +145,7 @@ void GbtsNodeStorage::finalize() {
       continue;
     }
 
-    const std::vector<std::uint32_t> sorted = sortBinByPhi(staged);
+    const std::vector<std::uint32_t>& sorted = sortBinByPhi(staged, phiSort);
 
     float minRadius = std::numeric_limits<float>::max();
     float maxRadius = std::numeric_limits<float>::lowest();

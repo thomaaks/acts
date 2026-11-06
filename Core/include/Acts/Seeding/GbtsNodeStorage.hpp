@@ -238,11 +238,22 @@ class GbtsNodeStorage final {
     std::uint32_t strip{detail::kNoStrip};
   };
 
+  /// The phi sort's buffers, kept from bin to bin so that a bin's sort
+  /// allocates nothing once a larger bin has been sorted.
+  struct PhiSortBuffers {
+    std::vector<std::pair<std::uint32_t, float>> items;
+    std::vector<std::pair<std::uint32_t, float>> scratch;
+    std::vector<std::uint32_t> buckets;
+    std::vector<std::uint32_t> sorted;
+  };
+
   /// Sort a single bin's staged nodes by phi.
   /// @param staged Staged node indices of the bin
-  /// @return The staged indices in phi order
-  std::vector<std::uint32_t> sortBinByPhi(
-      const std::vector<std::uint32_t>& staged) const;
+  /// @param buffers The sort's buffers, reused from the bin before
+  /// @return The staged indices in phi order, held in @p buffers
+  const std::vector<std::uint32_t>& sortBinByPhi(
+      const std::vector<std::uint32_t>& staged,
+      PhiSortBuffers& buffers) const;
 
   /// Narrow a node's tau window using the tau lookup table.
   /// @param staged The staged node

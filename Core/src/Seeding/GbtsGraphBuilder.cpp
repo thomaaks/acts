@@ -273,9 +273,17 @@ GbtsGraph GbtsGraphBuilder::buildTheGraph(const GbtsRoiDescriptor& roi,
 
   KeptContainer kept;
 
-  // per window: the connected nodes of its bin, where useZ0Histogram filters
-  // them; reused across bin groups as the windows are
-  std::vector<std::vector<std::pair<float, SpacePointIndex>>> connectedPhiNodes;
+  // A bin's connected nodes alone, for the bin groups that skip the rest
+  // (useZ0Histogram). Which they are changes only as the bin's own group
+  // runs, so a list is kept across the groups that read it, and made again
+  // only where that group ran after it: by the count of groups begun when it
+  // was made, and when the bin's own group last ended.
+  const std::uint32_t numBins = m_geometry->numBins();
+  std::vector<std::vector<std::pair<float, SpacePointIndex>>> connectedPhiNodes(
+      numBins);
+  std::vector<std::uint32_t> connectedMadeAt(numBins, 0);
+  std::vector<std::uint32_t> connectionsChangedAt(numBins, 0);
+  std::uint32_t groupCount = 0;
 
   const bool calibrate = m_cfg.calibrateStrips && nodeStorage.hasStrips();
 
@@ -298,13 +306,12 @@ GbtsGraph GbtsGraphBuilder::buildTheGraph(const GbtsRoiDescriptor& roi,
 
   // loop over bin groups
   for (const auto& bg : m_geometry->binGroups()) {
+    ++groupCount;
     const detail::GbtsEtaBinInfo& B1 = nodeStorage.etaBin(bg.bin);
 
     if (B1.empty()) {
       continue;
     }
-
-    const float rb1 = B1.minRadius;
 
     const std::int32_t barrelOrder1 = B1.barrelOrder;
 
@@ -329,21 +336,15 @@ GbtsGraph GbtsGraphBuilder::buildTheGraph(const GbtsRoiDescriptor& roi,
         continue;
       }
 
-      const float rb2 = B2.maxRadius;
-
-      float deltaPhi = deltaPhi0;  // the default
-
-      // override the default window width
-      if (m_cfg.useEtaBinning) {
-        const float absDr = std::fabs(rb2 - rb1);
-        if (absDr < m_cfg.phiWindowSplitDeltaRadius) {
-          deltaPhi = m_cfg.phiWindowNearOffset +
-                     m_cfg.phiWindowNearSlope * ptScale * absDr;
-        } else {
-          deltaPhi = m_cfg.phiWindowFarOffset +
-                     m_cfg.phiWindowFarSlope * ptScale * absDr;
-        }
-      }
+      // the default window width, or one that grows with the radial gap
+      const float absDr = std::fabs(B2.maxRadius - B1.minRadius);
+      const float deltaPhi =
+          !m_cfg.useEtaBinning ? deltaPhi0
+          : absDr < m_cfg.phiWindowSplitDeltaRadius
+              ? m_cfg.phiWindowNearOffset +
+                    m_cfg.phiWindowNearSlope * ptScale * absDr
+              : m_cfg.phiWindowFarOffset +
+                    m_cfg.phiWindowFarSlope * ptScale * absDr;
 
       kept.ensureSize(B2.phiNodes.size());
 
@@ -372,19 +373,16 @@ GbtsGraph GbtsGraphBuilder::buildTheGraph(const GbtsRoiDescriptor& roi,
       // instead. Not for the group's own bin: its nodes gain connections as
       // n1 is processed.
       if (useZ0Histogram && link.bin != bg.bin) {
-        const std::size_t windowIdx = phiSlidingWindow.size() - 1;
-        // growing the outer vector moves the inner ones, which keeps their
-        // buffers, so earlier windows' pointers stay valid
-        if (connectedPhiNodes.size() <= windowIdx) {
-          connectedPhiNodes.resize(windowIdx + 1);
-        }
         std::vector<std::pair<float, SpacePointIndex>>& connected =
-            connectedPhiNodes[windowIdx];
-        connected.clear();
-        for (const auto& phiNode : B2.phiNodes) {
-          if (edgeInfo[phiNode.second].isConnected != 0) {
-            connected.push_back(phiNode);
+            connectedPhiNodes[link.bin];
+        if (connectedMadeAt[link.bin] <= connectionsChangedAt[link.bin]) {
+          connected.clear();
+          for (const auto& phiNode : B2.phiNodes) {
+            if (edgeInfo[phiNode.second].isConnected != 0) {
+              connected.push_back(phiNode);
+            }
           }
+          connectedMadeAt[link.bin] = groupCount;
         }
         window.phiNodes = connected.data();
         window.numPhiNodes = static_cast<std::uint32_t>(connected.size());
@@ -394,16 +392,16 @@ GbtsGraph GbtsGraphBuilder::buildTheGraph(const GbtsRoiDescriptor& roi,
     // in GBTSv3 the outer loop goes over n1 nodes in the Layer 1 bin
     for (SpacePointIndex n1Idx = B1.nodes.first; n1Idx < B1.nodes.second;
          ++n1Idx) {
-      // initialization using the top watermark of the edge storage
-      edgeInfo[n1Idx].firstEdge =
-          static_cast<std::uint32_t>(edgeStorage.size());
+      // n1's edges start at the top watermark of the edge storage
+      const auto firstEdge = static_cast<std::uint32_t>(edgeStorage.size());
 
       // the counter for the incoming graph edges created for n1
       std::uint16_t numCreatedEdges = 0;
 
       bool isConnected = false;
 
-      std::array<std::uint8_t, detail::kGbtsZ0HistogramBins> z0Histo = {};
+      // the z0 bins of n1's edges that found a neighbour
+      std::uint16_t z0BitMask = 0;
 
       const detail::GbtsNodeParams& n1pars = params[n1Idx];
 
@@ -670,12 +668,10 @@ GbtsGraph GbtsGraphBuilder::buildTheGraph(const GbtsRoiDescriptor& roi,
             bool isGood = n2NumEdges <= m_cfg.matchBeforeCreateMaxEdges;
 
             if (!isGood) {
-              const float uat1 = invExpEta;
-
               for (std::uint32_t n2InIdx = n2FirstEdge; n2InIdx < n2LastEdge;
                    ++n2InIdx) {
                 const float tau2 = edgeStorage[n2InIdx].p[0];
-                const float tauRatio = tau2 * uat1 - 1.0f;
+                const float tauRatio = tau2 * invExpEta - 1.0f;
 
                 if (std::abs(tauRatio) > m_cfg.tauRatioPrecut) {  // bad match
                   continue;
@@ -690,29 +686,24 @@ GbtsGraph GbtsGraphBuilder::buildTheGraph(const GbtsRoiDescriptor& roi,
             }
           }
 
-          const float dPhi2 = curv * r2c;
-          const float dPhi1 = curv * r1c;
-
           if (edgeStorage.size() < maxEdges) {
             const auto outEdgeIdx =
                 static_cast<std::uint32_t>(edgeStorage.size());
 
             edgeStorage.emplace_back(n1Idx, n2Idx, slw.tauRatioCutOuter,
                                      isPixelBarrel2, expEta, curv,
-                                     phi1 + dPhi1);
+                                     phi1 + curv * r1c);
 
             ++numCreatedEdges;
 
-            const float uat2 = invExpEta;
-            const float phi2u = phi2 + dPhi2;
-            const float curv2 = curv;
+            const float phi2u = phi2 + curv * r2c;
 
             // looking for neighbours of the new edge
             for (std::uint32_t inEdgeIdx = n2FirstEdge; inEdgeIdx < n2LastEdge;
                  ++inEdgeIdx) {
               detail::GbtsEdge* pS = &edgeStorage[inEdgeIdx];
 
-              const float absTauRatio = std::abs(pS->p[0] * uat2 - 1.0f);
+              const float absTauRatio = std::abs(pS->p[0] * invExpEta - 1.0f);
 
               // the looser of the cuts the two layer pairs carry
               const float tauRatioCut =
@@ -736,7 +727,7 @@ GbtsGraph GbtsGraphBuilder::buildTheGraph(const GbtsRoiDescriptor& roi,
                 continue;
               }
 
-              const float dcurv = curv2 - pS->p[1];
+              const float dcurv = curv - pS->p[1];
 
               if (dcurv < -m_cfg.cutDCurvMax || dcurv > m_cfg.cutDCurvMax) {
                 continue;
@@ -776,13 +767,13 @@ GbtsGraph GbtsGraphBuilder::buildTheGraph(const GbtsRoiDescriptor& roi,
 
               isConnected = true;  // there is at least one good match
 
-              // edge confirmed - update z0 histogram. Only doubletFilterRZ
+              // edge confirmed - mark its z0 bin. Only doubletFilterRZ
               // holds z0 to the histogram range, and it is optional.
               if (const auto z0BinIndex = static_cast<std::int32_t>(
                       z0HistoCoeff * (z0 - m_cfg.minZ0));
                   z0BinIndex >= 0 &&
                   z0BinIndex < detail::kGbtsZ0HistogramBins) {
-                ++z0Histo[static_cast<std::size_t>(z0BinIndex)];
+                z0BitMask |= static_cast<std::uint16_t>(1u << z0BinIndex);
               }
 
               nConnections++;
@@ -793,24 +784,16 @@ GbtsGraph GbtsGraphBuilder::buildTheGraph(const GbtsRoiDescriptor& roi,
 
       // updating the n1 node attributes
 
+      edgeInfo[n1Idx].firstEdge = firstEdge;
       edgeInfo[n1Idx].numEdges = numCreatedEdges;
       if (isConnected) {
-        std::uint16_t z0BitMask = 0x0;
-
-        for (std::int32_t bIdx = 0; bIdx < detail::kGbtsZ0HistogramBins;
-             ++bIdx) {
-          if (z0Histo[static_cast<std::size_t>(bIdx)] == 0) {
-            continue;
-          }
-
-          z0BitMask |= (1 << bIdx);
-        }
-
         // non-zero mask indicates that there is at least one connected edge
         edgeInfo[n1Idx].isConnected = z0BitMask;
       }
 
     }  // loop over n1 (inner) nodes
+
+    connectionsChangedAt[bg.bin] = groupCount;
   }  // loop over bin groups: a single n1 bin and multiple n2 bins
 
   if (edgeStorage.size() >= maxEdges) {

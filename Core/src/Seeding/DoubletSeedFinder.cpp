@@ -158,9 +158,13 @@ class Impl final : public DoubletSeedFinder {
         return isBottomCandidate ? deltaR >= m_cfg.deltaRMin
                                  : deltaR <= m_cfg.deltaRMax;
       };
-      nCandidates =
-          std::ranges::partition_point(candidateSps, insideRadialRange) -
-          candidateSps.begin();
+      // search for the range's end only when the last candidate is outside
+      // it: TripletSeeder passes its groups already cut there
+      if (!candidateSps.empty() && !insideRadialRange(candidateSps.back())) {
+        nCandidates =
+            std::ranges::partition_point(candidateSps, insideRadialRange) -
+            candidateSps.begin();
+      }
     }
 
     // the candidates go through in blocks: in each block the z-r and time cuts

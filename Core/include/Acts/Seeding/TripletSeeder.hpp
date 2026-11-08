@@ -15,6 +15,7 @@
 #include "Acts/Seeding/TripletSeedFinder.hpp"
 #include "Acts/Utilities/Logger.hpp"
 
+#include <cstdint>
 #include <vector>
 
 namespace Acts {
@@ -46,6 +47,11 @@ class TripletSeeder {
     std::vector<SpacePointContainer::ConstRange> bottomSpGroups;
     /// Cursors into the top space point groups, advanced the same way
     std::vector<SpacePointContainer::ConstRange> topSpGroups;
+    /// How many of each bottom group's space points, from its cursor, are in
+    /// the radial range of the last middle space point
+    std::vector<std::uint32_t> bottomSpGroupEnds;
+    /// The same for the top groups
+    std::vector<std::uint32_t> topSpGroupEnds;
   };
 
   /// Construct a TripletSeeder with optional logger.

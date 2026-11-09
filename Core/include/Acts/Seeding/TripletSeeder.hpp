@@ -52,6 +52,12 @@ class TripletSeeder {
     std::vector<std::uint32_t> bottomSpGroupEnds;
     /// The same for the top groups
     std::vector<std::uint32_t> topSpGroupEnds;
+    /// Each bottom group as passed to the doublet finder, cut to the radial
+    /// range of the current batch of middle space points
+    std::vector<SpacePointContainer::ConstRange> bottomCandidateSpGroups;
+    /// Each top group as passed to the doublet finder, cut to the radial
+    /// range of the current batch of middle space points
+    std::vector<SpacePointContainer::ConstRange> topCandidateSpGroups;
   };
 
   /// Construct a TripletSeeder with optional logger.
